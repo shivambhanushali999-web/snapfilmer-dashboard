@@ -340,10 +340,43 @@
   // Settings, which can override these for one specific event). Standard = applied to
   // preview/shared images; Original = applied to full-resolution/original files, so a
   // studio can watermark originals more aggressively than the shareable previews.
+  // logoMode: 'text' | 'logo' | 'both' — 'logo' uses the same custom logo uploaded
+  // once here or on the Share/QR page (STUDIO.logoUrl), so there's a single logo to
+  // manage instead of re-uploading it per watermark tier.
   const WATERMARK_DEFAULTS = {
-    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right' },
-    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center' },
+    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', logoMode: 'text' },
+    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center', logoMode: 'text' },
   };
+
+  // Every event gets its own copy of these two tiers (so one event's overrides never
+  // bleed into another's), seeded from the studio-wide defaults above at creation time.
+  function freshEventWatermark() {
+    return {
+      standard: Object.assign({}, WATERMARK_DEFAULTS.standard),
+      original: Object.assign({}, WATERMARK_DEFAULTS.original),
+      dualLogo: false,
+      sponsorLogoUrl: '',
+    };
+  }
+
+  // Older event docs (or the local seed below) may still have the old flat shape
+  // ({ enabled, text, opacity, position, dualLogo }) from before watermarking was
+  // actually wired up to show on photos — convert those in place so nothing crashes
+  // reading e.watermark.standard.enabled on a doc that predates this.
+  function migrateEventWatermarkShape(e) {
+    const w = e.watermark;
+    if (w && w.standard && w.original) return; // already the current shape
+    e.watermark = !w ? freshEventWatermark() : {
+      standard: { enabled: !!w.enabled, text: w.text || STUDIO.name, opacity: typeof w.opacity === 'number' ? w.opacity : 55, position: w.position || 'bottom-right', logoMode: 'text' },
+      original: Object.assign({}, WATERMARK_DEFAULTS.original),
+      dualLogo: !!w.dualLogo,
+      sponsorLogoUrl: w.sponsorLogoUrl || '',
+    };
+    // Write the corrected shape straight back to Firestore too — otherwise the guest
+    // app (which reads this doc independently) would keep seeing the old flat shape
+    // until someone happens to edit this event's watermark tab again.
+    if (db && e.id) db.collection('events').doc(e.id).set({ watermark: e.watermark }, { merge: true }).catch(function () {});
+  }
 
   // Notification preferences (Share page's "Push Notifications" toggle + the Settings
   // page's notification toggles) — persisted to the same studio/profile doc so they
@@ -365,7 +398,7 @@
       albums: [{ name: 'Haldi', count: 180 }, { name: 'Sangeet', count: 260 }, { name: 'Wedding', count: 620 }, { name: 'Reception', count: 180 }],
       privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: true, guestUpload: true, pin: '4821', coHosts: ['ronit@studio.com'], enquiry: true, disabled: false },
       downloads: { permission: 'all', anonymous: true, originalQuality: false },
-      watermark: { enabled: true, text: 'SnapFilmer', opacity: 60, position: 'bottom-right', dualLogo: false },
+      watermark: freshEventWatermark(),
       videos: [], highlightEnabled: false,
     },
   ];
@@ -673,9 +706,14 @@
         else val = input.value;
         setNestedField(e, input.dataset.field, val);
 
-        if (input.dataset.field === 'watermark.opacity') {
-          const lbl = document.getElementById('watermark-opacity-label');
+        if (/^watermark\.(standard|original)\.opacity$/.test(input.dataset.field)) {
+          const tierKey = input.dataset.field.split('.')[1];
+          const lbl = document.getElementById('ed-wm-' + tierKey + '-opacity-label');
           if (lbl) lbl.textContent = 'Opacity (' + val + '%)';
+        }
+        if (input.dataset.field === 'watermark.dualLogo') {
+          const row = document.getElementById('ed-sponsor-logo-row');
+          if (row) row.style.display = val ? '' : 'none';
         }
         // These fields are what the guest app reads live to decide the selfie/My
         // Photos/Gallery access flow, so push them to Firestore the moment any of
@@ -691,6 +729,16 @@
             pin: e.privacy.pin,
             enquiry: e.privacy.enquiry,
           });
+        }
+        // Downloads and Watermark tabs used to only update this local e object and
+        // never actually reach Firestore — they looked like they saved but the guest
+        // app (and any other device) never saw the change. Push the whole sub-object
+        // any time one of its fields changes.
+        if (input.dataset.field.indexOf('downloads.') === 0) {
+          syncEventPrivacyToCloud(e.id, { downloads: e.downloads });
+        }
+        if (input.dataset.field.indexOf('watermark.') === 0) {
+          syncEventPrivacyToCloud(e.id, { watermark: e.watermark });
         }
       });
     });
@@ -871,7 +919,12 @@
     // No fallback here — this used to force-show "3 events expiring" even when
     // nothing was actually expiring, a fake urgency/upsell nudge. Banner below
     // only renders when this is genuinely > 0.
-    const expiringCount = EVENTS.filter(function (e) { return daysUntil(e.date) < 0 || e.status === 'disabled'; }).length;
+    // IMPORTANT: check e.validUpto (the event's real 1-year gallery validity date,
+    // same field shown as "Valid upto" on the event card), NOT e.date (the actual
+    // wedding/event day). e.date is almost always in the past the moment an event
+    // is created — using it here made every finished wedding look "expired"
+    // immediately, even though its gallery is still valid for months.
+    const expiringCount = EVENTS.filter(function (e) { return daysUntil(e.validUpto || STUDIO.renewalDate) < 0 || e.status === 'disabled'; }).length;
 
     el.innerHTML =
       renderExpiryBanners(expiringCount) +
@@ -1154,7 +1207,7 @@
       albums: [],
       privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, pin: '', coHosts: [], enquiry: false, disabled: false },
       downloads: { permission: 'all', anonymous: true, originalQuality: false },
-      watermark: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', dualLogo: false },
+      watermark: freshEventWatermark(),
       videos: [], highlightEnabled: false,
     };
     EVENTS.unshift(newEvent);
@@ -1377,20 +1430,21 @@
         '</div>';
     } else if (tab === 'watermark') {
       el.innerHTML =
-        '<div class="card">' +
-          '<div class="card-title">Watermark Settings</div>' +
-          '<div class="card-sub">Protect preview photos from unauthorized use</div>' +
-          toggleRowHtml('Enable Watermark', 'Apply a watermark to preview images.', e.watermark.enabled, '', 'watermark.enabled') +
-          '<div class="grid-2" style="margin-top:16px;">' +
-            '<div class="field"><label>Watermark Text</label><input class="input" data-field="watermark.text" value="' + e.watermark.text + '"></div>' +
-            '<div class="field"><label>Position</label><select class="input" data-field="watermark.position">' +
-              '<option' + (e.watermark.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
-              '<option' + (e.watermark.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
-              '<option' + (e.watermark.position === 'center' ? ' selected' : '') + '>center</option>' +
-            '</select></div>' +
+        '<div class="card-sub" style="margin-bottom:14px;">Overrides your studio-wide Watermark defaults for this one event. This actually shows on guest photos in the app and is baked into original-file downloads.</div>' +
+        eventWatermarkTierCard(e, 'standard', 'Standard Watermark', 'Applied to preview images guests see and share before any purchase.') +
+        eventWatermarkTierCard(e, 'original', 'Original Watermark', 'Applied to full-resolution / original files, so unpaid downloads still carry your mark.') +
+        '<div class="card" style="margin-top:16px;">' +
+          toggleRowHtml('Dual Logo (Studio + Sponsor)', 'Show two watermark logos side by side, wherever a tier above is set to Logo or Text + Logo.', e.watermark.dualLogo, '', 'watermark.dualLogo') +
+          '<div id="ed-sponsor-logo-row" style="' + (e.watermark.dualLogo ? '' : 'display:none;') + 'margin-top:10px;">' +
+            '<label>Sponsor Logo</label>' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
+              (e.watermark.sponsorLogoUrl ? '<img src="' + e.watermark.sponsorLogoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No sponsor logo uploaded yet.</span>') +
+              '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (e.watermark.sponsorLogoUrl ? 'Change' : 'Upload') +
+                '<input type="file" accept="image/*" style="display:none" onchange="uploadSponsorLogo(event,\'' + e.id + '\')">' +
+              '</label>' +
+              (e.watermark.sponsorLogoUrl ? '<button class="btn-ghost btn-sm" onclick="removeSponsorLogo(\'' + e.id + '\')">Remove</button>' : '') +
+            '</div>' +
           '</div>' +
-          '<div class="field"><label id="watermark-opacity-label">Opacity (' + e.watermark.opacity + '%)</label><input class="input" type="range" min="0" max="100" data-field="watermark.opacity" value="' + e.watermark.opacity + '"></div>' +
-          toggleRowHtml('Dual Logo (Studio + Sponsor)', 'Show two watermark logos side by side.', e.watermark.dualLogo, '', 'watermark.dualLogo') +
         '</div>';
     }
     wireSettingsFields(el, e, tab);
@@ -3037,7 +3091,7 @@
         if (!e.albums) e.albums = [];
         if (!e.privacy) e.privacy = { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, pin: '', coHosts: [], enquiry: false, disabled: false };
         if (!e.downloads) e.downloads = { permission: 'all', anonymous: true, originalQuality: false };
-        if (!e.watermark) e.watermark = { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', dualLogo: false };
+        migrateEventWatermarkShape(e);
         if (!e.videos) e.videos = [];
         if (typeof e.photos !== 'number') e.photos = 0;
       });
@@ -3189,14 +3243,28 @@
       '<div class="card-sub">' + desc + '</div>' +
       toggleRowHtml('Enable ' + title, 'Turn this watermark on for all new events by default.', w.enabled, 'wm-' + key + '-enabled', '') +
       '<div class="grid-2" style="margin-top:6px;">' +
-        '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' +
+        '<div class="field"><label>Watermark Content</label><select class="input" id="wm-' + key + '-mode">' +
+          '<option value="text"' + (w.logoMode === 'text' ? ' selected' : '') + '>Text only</option>' +
+          '<option value="logo"' + (w.logoMode === 'logo' ? ' selected' : '') + '>Logo only</option>' +
+          '<option value="both"' + (w.logoMode === 'both' ? ' selected' : '') + '>Text + Logo</option>' +
+        '</select></div>' +
         '<div class="field"><label>Position</label><select class="input" id="wm-' + key + '-position">' +
           '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
           '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
           '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
         '</select></div>' +
       '</div>' +
+      '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' +
       '<div class="field"><label id="wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" id="wm-' + key + '-opacity" value="' + w.opacity + '"></div>' +
+      '<div class="field" style="margin-bottom:0;"><label>Logo (used when Content is set to Logo)</label>' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo uploaded yet.</span>') +
+          '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change Logo' : 'Upload Logo') +
+            '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event);setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">' +
+          '</label>' +
+        '</div>' +
+        '<div class="hint">This is the same logo used on your Share/QR codes — upload it once, use it everywhere.</div>' +
+      '</div>' +
     '</div>';
   }
 
@@ -3204,10 +3272,12 @@
     const w = WATERMARK_DEFAULTS[key];
     const enabledInput = document.getElementById('wm-' + key + '-enabled');
     const textInput = document.getElementById('wm-' + key + '-text');
+    const modeSelect = document.getElementById('wm-' + key + '-mode');
     const posSelect = document.getElementById('wm-' + key + '-position');
     const opacityInput = document.getElementById('wm-' + key + '-opacity');
     if (enabledInput) enabledInput.addEventListener('change', function () { w.enabled = enabledInput.checked; saveWatermarkDefaults(); });
     if (textInput) textInput.addEventListener('input', function () { w.text = textInput.value; saveWatermarkDefaults(); });
+    if (modeSelect) modeSelect.addEventListener('change', function () { w.logoMode = modeSelect.value; saveWatermarkDefaults(); });
     if (posSelect) posSelect.addEventListener('change', function () { w.position = posSelect.value; saveWatermarkDefaults(); });
     if (opacityInput) opacityInput.addEventListener('input', function () {
       w.opacity = Number(opacityInput.value);
@@ -3219,12 +3289,77 @@
 
   function renderWatermarkPage(el) {
     el.innerHTML =
-      '<div class="card-sub" style="margin-bottom:18px;">These are your studio-wide defaults. Any event\'s own Watermark tab (Event Settings &rarr; Watermark) can still override them for that one event.</div>' +
+      '<div class="card-sub" style="margin-bottom:18px;">These are your studio-wide defaults, used when a new event is created. Any event\'s own Watermark tab (Event Settings &rarr; Watermark) can still override them for that one event. This actually shows on guest photos in the app now, and is baked into original-file downloads &mdash; not just a setting that sits here.</div>' +
       watermarkCard('standard', 'Standard Watermark', 'Applied to preview images guests see and share before any purchase.') +
       watermarkCard('original', 'Original Watermark', 'Applied to full-resolution / original files, so unpaid downloads still carry your mark.');
     wireWatermarkCard('standard');
     wireWatermarkCard('original');
     fillIcons();
+  }
+
+  // Per-event override version of watermarkCard() above — same layout, but wired
+  // through the generic data-field mechanism (wireSettingsFields) instead of its own
+  // manual listeners, since this lives inside the Event Settings tab framework.
+  function eventWatermarkTierCard(e, key, title, desc) {
+    const w = e.watermark[key];
+    return '<div class="card" style="margin-bottom:16px;">' +
+      '<div class="card-title">' + title + '</div>' +
+      '<div class="card-sub">' + desc + '</div>' +
+      toggleRowHtml('Enable ' + title, 'Apply this watermark for this event.', w.enabled, '', 'watermark.' + key + '.enabled') +
+      '<div class="grid-2" style="margin-top:6px;">' +
+        '<div class="field"><label>Watermark Content</label><select class="input" data-field="watermark.' + key + '.logoMode">' +
+          '<option value="text"' + (w.logoMode === 'text' ? ' selected' : '') + '>Text only</option>' +
+          '<option value="logo"' + (w.logoMode === 'logo' ? ' selected' : '') + '>Logo only</option>' +
+          '<option value="both"' + (w.logoMode === 'both' ? ' selected' : '') + '>Text + Logo</option>' +
+        '</select></div>' +
+        '<div class="field"><label>Position</label><select class="input" data-field="watermark.' + key + '.position">' +
+          '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
+          '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
+          '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
+        '</select></div>' +
+      '</div>' +
+      '<div class="field"><label>Watermark Text</label><input class="input" data-field="watermark.' + key + '.text" value="' + w.text + '"></div>' +
+      '<div class="field" style="margin-bottom:0;"><label id="ed-wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" data-field="watermark.' + key + '.opacity" value="' + w.opacity + '"></div>' +
+    '</div>';
+  }
+
+  // Logo storage mirrors uploadStudioLogo() — small resized PNG data URL, stored
+  // directly on the event doc (well under Firestore's 1MB doc cap).
+  function uploadSponsorLogo(evt, eventId) {
+    const file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file) return;
+    const e = EVENTS.find(function (x) { return x.id === eventId; });
+    if (!e) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      const img = new Image();
+      img.onload = function () {
+        let w = img.width, h = img.height;
+        const maxDim = 240;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = Math.round(h * (maxDim / w)); w = maxDim; }
+          else { w = Math.round(w * (maxDim / h)); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        e.watermark.sponsorLogoUrl = canvas.toDataURL('image/png');
+        syncEventPrivacyToCloud(eventId, { watermark: e.watermark });
+        if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetail(document.getElementById('page-content'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function removeSponsorLogo(eventId) {
+    const e = EVENTS.find(function (x) { return x.id === eventId; });
+    if (!e) return;
+    if (!confirm('Remove the sponsor logo from this event\'s watermark?')) return;
+    e.watermark.sponsorLogoUrl = '';
+    syncEventPrivacyToCloud(eventId, { watermark: e.watermark });
+    if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetail(document.getElementById('page-content'));
   }
 
   // ================= Support Tickets =================
