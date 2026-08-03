@@ -1268,6 +1268,15 @@
           '</div>' +
         '</div>' +
         '<div style="flex:1;min-width:0;">' +
+          // Settings tabs live up here, right below the header, instead of after the
+          // whole photo grid — with events running into the thousands of photos, that
+          // used to mean scrolling past every single photo just to reach Watermark/
+          // Downloads/Privacy settings. The "Settings" button in the header above jumps
+          // straight here now, since it's actually in view without scrolling past photos.
+          '<div class="tabs-row" id="ed-tabs">' +
+            tabBtn('general', 'General', true) + tabBtn('privacy', 'Privacy & Access') + tabBtn('downloads', 'Downloads') + tabBtn('watermark', 'Watermark') +
+          '</div>' +
+          '<div id="ed-content" style="margin-bottom:26px;"></div>' +
           '<div id="ep-upload-target-note" style="font-size:11.5px;color:var(--muted);margin-bottom:8px;"></div>' +
           '<div class="grid-2" style="margin-bottom:20px;">' +
             '<div class="card" style="border:2px dashed var(--border);">' +
@@ -1299,10 +1308,6 @@
             '</div>' +
           '</div>' +
           '<div class="grid-3" id="ep-photo-grid" style="margin-bottom:24px;"></div>' +
-          '<div class="tabs-row" id="ed-tabs">' +
-            tabBtn('general', 'General', true) + tabBtn('privacy', 'Privacy & Access') + tabBtn('downloads', 'Downloads') + tabBtn('watermark', 'Watermark') +
-          '</div>' +
-          '<div id="ed-content"></div>' +
         '</div>' +
       '</div>';
 
@@ -1352,9 +1357,9 @@
   }
 
   // Event-level settings (Face Recognition, Guest Registration, download permissions,
-  // watermark, etc.) already live in the tabs below the photo grid, but they were easy
-  // to miss since you had to scroll all the way past Albums/Upload/Photos to find them.
-  // This header button jumps straight to Privacy & Access — the tab that covers face
+  // watermark, etc.) live in the tabs right below the header now (moved up from below
+  // the photo grid, which used to mean scrolling past every photo to find them). This
+  // header button jumps straight to Privacy & Access — the tab that covers face
   // recognition, guest registration, and "who can see personal photos" — with Downloads
   // and the other tabs just one click away right there.
   function openEventSettings() {
@@ -3097,7 +3102,20 @@
       });
       renderSidebar();
       if (currentPage === 'events') renderEventsCardGrid();
-      if (currentPage === 'event-detail') renderEventDetail(document.getElementById('page-content'));
+      if (currentPage === 'event-detail') {
+        // This listener also fires for the studio's OWN writes bouncing back from
+        // Firestore (e.g. every single Watermark/Downloads/Privacy field change syncs
+        // here) — a full renderEventDetail() rebuild resets the tab strip back to
+        // "General" every time, which made it look like the page was kicking you out
+        // mid-edit. Remember whichever tab was open and restore it after rebuilding.
+        const activeBtn = document.querySelector('#ed-tabs .tab-btn.active');
+        const activeTab = activeBtn ? activeBtn.dataset.tab : 'general';
+        renderEventDetail(document.getElementById('page-content'));
+        if (activeTab !== 'general') {
+          const restoreBtn = document.querySelector('#ed-tabs [data-tab="' + activeTab + '"]');
+          if (restoreBtn) restoreBtn.click();
+        }
+      }
       if (currentPage === 'overview') renderOverview(document.getElementById('page-content'));
     }, function () {});
   }
@@ -3346,7 +3364,11 @@
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
         e.watermark.sponsorLogoUrl = canvas.toDataURL('image/png');
         syncEventPrivacyToCloud(eventId, { watermark: e.watermark });
-        if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetail(document.getElementById('page-content'));
+        // Refresh only the Watermark tab's own content (not the whole event-detail
+        // page via renderEventDetail) — that full rebuild resets the tab strip back
+        // to "General" every time, which is what was kicking studios out of whatever
+        // tab they were on after any watermark change.
+        if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetailTab('watermark', e);
       };
       img.src = reader.result;
     };
@@ -3359,7 +3381,7 @@
     if (!confirm('Remove the sponsor logo from this event\'s watermark?')) return;
     e.watermark.sponsorLogoUrl = '';
     syncEventPrivacyToCloud(eventId, { watermark: e.watermark });
-    if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetail(document.getElementById('page-content'));
+    if (currentPage === 'event-detail' && currentEventId === eventId) renderEventDetailTab('watermark', e);
   }
 
   // ================= Support Tickets =================
