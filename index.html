@@ -11,14 +11,15 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <style>
   :root {
-    --bg: #FAFAF8;
+    /* Earthy sage-green / warm cream palette, matched to the guest app's palette. */
+    --bg: #F5F1E7;
     --surface: #FFFFFF;
-    --ink: #17161B;
-    --muted: #918D93;
-    --accent: #FF5A36;
-    --accent-soft: #FFE9E2;
-    --accent-ink: #C0431F;
-    --border: #EFECE8;
+    --ink: #2B2F22;
+    --muted: #7C7A6C;
+    --accent: #4B5D3A;
+    --accent-soft: #E6E8E3;
+    --accent-ink: #3B492D;
+    --border: #E8E2D2;
     --green: #1FA97A;
     --green-soft: #E4F7EF;
     --blue: #3A7CFF;
@@ -305,7 +306,7 @@
     name: 'SnapFilmer', email: 'snapfilmergallery6@gmail.com', phone: '+91 90000 00000',
     website: 'https://www.instagram.com/snapfilmer/',
     about: "At SnapFilmer, we don't just take photos, we tell stories. From magical weddings to dreamy pre-wedding shoots, every frame is crafted with heart.",
-    brandColor: '#FF5A36',
+    brandColor: '#4B5D3A',
     social: { instagram: 'https://www.instagram.com/snapfilmer/', youtube: '', whatsapp: '', vimeo: '' },
     plan: 'Growth Plan', creditsUsed: 6400, creditsTotal: 10000,
     renewalDate: '2026-09-01', billingCycle: 'Monthly',
@@ -1290,7 +1291,7 @@
             '</div>' +
             '<div class="card" style="border:2px dashed var(--border);">' +
               '<div style="display:flex;align-items:center;gap:10px;">' +
-                '<div class="ic" style="background:#FFE9E2;color:#B5490B;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + ICONS.IMAGE + '</div>' +
+                '<div class="ic" style="background:var(--accent-soft);color:var(--accent-ink);width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + ICONS.IMAGE + '</div>' +
                 '<div><div style="font-weight:800;font-size:13.5px;">Original Upload</div><div style="font-size:11.5px;color:var(--muted);">Upload and store original files <span class="pill orange" style="margin-left:4px;">Counts as 2x</span></div></div>' +
               '</div>' +
               '<label class="btn-outline" style="width:100%;justify-content:center;margin-top:12px;cursor:pointer;">' + ICONS.PLUS + ' Original Upload' +
@@ -1558,8 +1559,29 @@
     if (!db) return;
     dashboardPhotosUnsub = db.collection('photos').where('eventId', '==', eventId).onSnapshot(function (snap) {
       dashboardEventPhotos = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      reconcileAlbumCounts(eventId);
       renderEventPhotosGrid();
     }, function () {});
+  }
+
+  // Album "(count)" badges in the sidebar used to only update via a number that got
+  // incremented by hand at upload time — any path that missed that step (or any drift
+  // from deletes/moves) left the sidebar showing a stale count forever, like "(0)" next
+  // to an album that visibly has photos in it. Recomputing straight from the live
+  // photos collection (the same data the grid above already uses, which is why IT was
+  // always correct) means the sidebar can't go stale, and self-heals old bad data too.
+  function reconcileAlbumCounts(eventId) {
+    const ev = EVENTS.find(function (e) { return e.id === eventId; });
+    if (!ev || !Array.isArray(ev.albums) || !ev.albums.length) return;
+    let changed = false;
+    ev.albums.forEach(function (a) {
+      const real = dashboardEventPhotos.filter(function (p) { return p.album === a.name; }).length;
+      if (a.count !== real) { a.count = real; changed = true; }
+    });
+    if (changed) {
+      renderAlbumSidebar(ev);
+      syncEventPrivacyToCloud(eventId, { albums: ev.albums });
+    }
   }
 
   // selectedAlbumFilter meanings: 'ALL' = every photo in the event (the default now,
@@ -1660,6 +1682,7 @@
             '<select class="input" style="width:auto;padding:8px 10px;font-size:12px;background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3);" onchange="moveLightboxPhotoToAlbum(this.value)">' + moveOptions + '</select>' +
             '<button class="btn-outline btn-sm" style="color:#fff;border-color:rgba(255,255,255,.4);" onclick="setLightboxAs(\'cover\')">Event Cover</button>' +
             '<button class="btn-outline btn-sm" style="color:#fff;border-color:rgba(255,255,255,.4);" onclick="setLightboxAs(\'album\')">Album Cover</button>' +
+            '<button class="icon-btn" style="background:' + (p.isHighlight ? 'var(--accent)' : 'rgba(255,255,255,.12)') + ';color:#fff;" title="' + (p.isHighlight ? 'Remove from Highlights' : 'Mark as Highlight') + '" onclick="toggleLightboxHighlight()"><i data-icon="STAR"></i></button>' +
             '<button class="icon-btn" style="background:rgba(255,255,255,.12);color:#fff;" onclick="shareLightboxPhoto()"><i data-icon="SHARE"></i></button>' +
             '<button class="icon-btn" style="background:rgba(255,255,255,.12);color:#fff;" onclick="downloadLightboxPhoto()"><i data-icon="DOWNLOAD"></i></button>' +
             '<button class="icon-btn" style="background:rgba(255,255,255,.12);color:#fff;" onclick="deleteLightboxPhoto()"><i data-icon="TRASH"></i></button>' +
@@ -1676,6 +1699,21 @@
         '</div>' +
       '</div>';
     fillIcons();
+  }
+
+  // "Highlights" on the guest app's Home screen used to just be hardcoded demo photos
+  // with no way for a studio to actually choose what shows there — this is the real
+  // thing: star any photo here and it's what guests see in that row (see the guest
+  // app's renderStories(), which now filters real photos by isHighlight instead of
+  // showing picsum.photos placeholders).
+  function toggleLightboxHighlight() {
+    const p = lightboxPhotos[lightboxIndex];
+    if (!p || !db) return;
+    const next = !p.isHighlight;
+    db.collection('photos').doc(p.id).set({ isHighlight: next }, { merge: true }).then(function () {
+      p.isHighlight = next;
+      renderLightbox();
+    }).catch(function () { alert('Could not update highlight status — please try again.'); });
   }
 
   function setLightboxAs(kind) {
@@ -1970,7 +2008,11 @@
           const album = ev.albums.find(function (a) { return a.name === albumName; });
           if (album) album.count += result.done;
         }
-        syncEventPrivacyToCloud(eventId, { photos: ev.photos });
+        // Album counts used to only update this local EVENTS copy — the sidebar's "(0)"
+        // was really just stale Firestore data never written back, while the photo grid
+        // above showed the correct live count because it queries photos directly instead
+        // of trusting this cached number. Push albums along with photos so both agree.
+        syncEventPrivacyToCloud(eventId, { photos: ev.photos, albums: ev.albums });
         renderAlbumSidebar(ev);
       }
     });
@@ -2535,7 +2577,10 @@
           const album = ev.albums.find(function (a) { return a.name === albumName; });
           if (album) album.count += result.done;
         }
-        syncEventPrivacyToCloud(eventId, { photos: ev.photos });
+        // See the matching comment in handleEventPhotoUpload() — album counts need to
+        // be pushed to Firestore too, not just the event's total photo count, otherwise
+        // the album sidebar shows a stale "(0)" even once photos are really there.
+        syncEventPrivacyToCloud(eventId, { photos: ev.photos, albums: ev.albums });
       }
     });
   }
@@ -2548,7 +2593,7 @@
         e.preventDefault();
         e.stopPropagation();
         zone.style.borderColor = 'var(--accent)';
-        zone.style.background = 'var(--accent-soft, #FFF3EE)';
+        zone.style.background = 'var(--accent-soft, #E6E8E3)';
       });
     });
     ['dragleave', 'drop'].forEach(function (evtName) {
@@ -3490,7 +3535,7 @@
         '<button class="btn-solid" onclick="showPage(\'sellwizard\')">' + ICONS.PLUS + ' Create Sell Photos Event</button>' +
       '</div>' +
       '<div class="stat-grid">' +
-        statCard('DOLLAR', '#FFE9E2', 'var(--accent-ink)', '&#8377;' + SALES.totalRevenue.toLocaleString(), 'Total Revenue', '+23.5%') +
+        statCard('DOLLAR', 'var(--accent-soft)', 'var(--accent-ink)', '&#8377;' + SALES.totalRevenue.toLocaleString(), 'Total Revenue', '+23.5%') +
         statCard('IMAGE', '#E8EFFF', 'var(--blue)', SALES.photosSold.toLocaleString(), 'Photos Sold', '+18.2%') +
         statCard('EVENTS', '#E4F7EF', 'var(--green)', SALES.totalOrders.toLocaleString(), 'Total Orders', '+12.8%') +
         walletCard() +
@@ -3581,8 +3626,8 @@
       '<div class="stat-grid">' +
         statCard('WALLET', '#E4F7EF', 'var(--green)', '&#8377;' + SALES.walletBalance.toLocaleString(), 'INR Balance', '') +
         statCard('DOLLAR', '#E8EFFF', 'var(--blue)', '$0.00', 'USD Balance', '') +
-        statCard('EVENTS', '#FFE9E2', 'var(--accent-ink)', SALES.totalOrders, 'Completed Orders', '') +
-        statCard('CHART', '#FFE9E2', 'var(--accent-ink)', 0, 'Pending Orders', '') +
+        statCard('EVENTS', 'var(--accent-soft)', 'var(--accent-ink)', SALES.totalOrders, 'Completed Orders', '') +
+        statCard('CHART', 'var(--accent-soft)', 'var(--accent-ink)', 0, 'Pending Orders', '') +
       '</div>' +
       (SALES.recentOrders.length
         ? '<div class="card" style="margin-top:18px;"><div class="card-title">Revenue</div><div id="seller-rev-chart"></div></div>'
@@ -3959,7 +4004,7 @@
     container.innerHTML =
       '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:180px;">' +
         '<polygon points="' + areaPoints + '" fill="rgba(255,90,54,0.12)"/>' +
-        '<polyline points="' + points + '" fill="none" stroke="#FF5A36" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<polyline points="' + points + '" fill="none" stroke="#4B5D3A" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>' +
       '</svg>' +
       '<div style="display:flex;justify-content:space-between;margin-top:6px;">' +
         labels.map(function (l) { return '<span style="font-size:9.5px;color:var(--muted);font-weight:700;">' + l + '</span>'; }).join('') +
@@ -4078,9 +4123,9 @@
     el.innerHTML =
       '<div class="stat-grid">' +
         statCard('IMAGE', '#E8EFFF', 'var(--blue)', totalPhotos.toLocaleString(), 'Total Photos Uploaded', '') +
-        statCard('WALLET', '#FFE9E2', 'var(--accent-ink)', STUDIO.creditsUsed.toLocaleString() + ' / ' + STUDIO.creditsTotal.toLocaleString(), 'Upload Credits Used', pct + '%') +
+        statCard('WALLET', 'var(--accent-soft)', 'var(--accent-ink)', STUDIO.creditsUsed.toLocaleString() + ' / ' + STUDIO.creditsTotal.toLocaleString(), 'Upload Credits Used', pct + '%') +
         statCard('EVENTS', '#E4F7EF', 'var(--green)', EVENTS.length, 'Active Events', '') +
-        statCard('USERS', '#FFE9E2', 'var(--accent-ink)', EVENTS.reduce(function (s, e) { return s + e.guests; }, 0).toLocaleString(), 'Total Guests', '') +
+        statCard('USERS', 'var(--accent-soft)', 'var(--accent-ink)', EVENTS.reduce(function (s, e) { return s + e.guests; }, 0).toLocaleString(), 'Total Guests', '') +
       '</div>' +
       '<div class="card" style="margin-bottom:18px;">' +
         '<div class="card-title">Upload Credit Usage</div>' +
