@@ -817,6 +817,7 @@
         '</div>' +
         '<div class="content"><div class="page active" id="page-content"></div></div>' +
       '</div>' +
+      '<div id="share-modal-root"></div>' +
       '<div id="lightbox-root"></div>';
     renderSidebar();
   }
@@ -1251,7 +1252,7 @@
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;">' +
         '<span class="pill' + (e.privacy.faceRecognition ? ' green' : ' gray') + '" id="ed-facedetect-pill" style="cursor:pointer;" onclick="toggleFaceDetectionPanel()">' + (e.privacy.faceRecognition ? ICONS.CHECK : ICONS.CLOSE) + ' Face Detection ' + (e.privacy.faceRecognition ? 'Active' : 'Off') + '</span>' +
         '<button class="btn-outline btn-sm" onclick="toggleAdminRequestsPanel()">' + ICONS.BELL + ' Admin Request</button>' +
-        '<button class="btn-outline btn-sm" onclick="showPage(\'share\', \'' + e.id + '\')">' + ICONS.SHARE + ' Share</button>' +
+        '<button class="btn-outline btn-sm" onclick="openShareModal(\'' + e.id + '\')">' + ICONS.SHARE + ' Share</button>' +
         '<button class="btn-outline btn-sm" onclick="togglePhotoLimitPanel()">' + ICONS.ARROW_UP + ' Increase Photo Limit</button>' +
         '<button class="btn-outline btn-sm" onclick="openImportPanel()">' + ICONS.DOWNLOAD + ' Import</button>' +
         '<button class="btn-outline btn-sm" onclick="toggleGuestsDataPanel()">' + ICONS.USERS + ' Guests Data</button>' +
@@ -2871,16 +2872,29 @@
   let shareCustomMessage = null;
   let shareTab = 'message';
   let shareMessageSubTab = 'message';
+  // Per-QR-type color + logo-visibility state — real qrserver.com params (color/bgcolor),
+  // not decorative. Defaults to the studio's own brand color so a freshly-opened tab
+  // already looks intentional instead of plain black-on-white.
+  let shareQrColorMobile = null;
+  let shareQrColorWeb = null;
+  let shareQrLogoMobile = true;
+  let shareQrLogoWeb = true;
+  let shareLinksShortened = false;
+  let shareShortLinkCache = {};
 
   // Real Kamero's Share is a 5-tab modal-style page (Message/QR Codes/PIN/Advanced
   // Links/VIP Links), not just a single WhatsApp+copy-link card — rebuilding it to
   // match, including the reusable message template with {{placeholder}} tokens.
-  function renderShare(el) {
+  // embedded=true when opened as the Event Detail "Share" modal (see openShareModal()
+  // below) — already scoped to one specific event, so the "Select Event" switcher that
+  // makes sense on the standalone Share & QR nav page would just be redundant/confusing
+  // clutter there, same as real Kamero's per-event Share dialog doesn't have one either.
+  function renderShare(el, embedded) {
     const e = EVENTS.find(function (x) { return x.id === currentEventId; }) || EVENTS[0];
     el.innerHTML =
-      '<div class="field" style="max-width:340px;margin-bottom:20px;"><label>Select Event</label><select class="input" id="share-event-select">' +
+      (embedded ? '' : '<div class="field" style="max-width:340px;margin-bottom:20px;"><label>Select Event</label><select class="input" id="share-event-select">' +
         EVENTS.map(function (ev) { return '<option value="' + ev.id + '"' + (ev.id === e.id ? ' selected' : '') + '>' + ev.name + '</option>'; }).join('') +
-      '</select></div>' +
+      '</select></div>') +
       '<div class="tabs-row" id="share-tabs">' +
         tabBtn('message', 'Message', shareTab === 'message') + tabBtn('qr', 'QR Codes', shareTab === 'qr') +
         tabBtn('pin', 'PIN', shareTab === 'pin') + tabBtn('advanced', 'Advanced Links', shareTab === 'advanced') +
@@ -2895,20 +2909,80 @@
         renderShareTab(e);
       });
     });
-    document.getElementById('share-event-select').addEventListener('change', function (ev) {
-      currentEventId = ev.target.value;
-      renderShare(document.getElementById('page-content'));
-    });
+    if (!embedded) {
+      document.getElementById('share-event-select').addEventListener('change', function (ev) {
+        currentEventId = ev.target.value;
+        renderShare(document.getElementById('page-content'));
+      });
+    }
     renderShareTab(e);
   }
 
+  // Real Kamero's Share is opened right from the event you're looking at — a modal over
+  // the photo grid, not a full page navigation away from it. Reuses renderShare()
+  // unchanged (embedded=true just hides the now-redundant event switcher); everything
+  // inside (Message/QR/PIN/Advanced/VIP tabs) is the exact same real, wired functionality
+  // whether reached this way or via the standalone Share & QR nav page.
+  function openShareModal(eventId) {
+    currentEventId = eventId;
+    const root = document.getElementById('share-modal-root');
+    if (!root) return;
+    root.innerHTML =
+      '<div style="position:fixed;inset:0;background:rgba(20,16,20,.5);z-index:300;display:flex;align-items:center;justify-content:center;padding:24px;" onmousedown="if(event.target===this)closeShareModal()">' +
+        '<div style="background:var(--surface);border-radius:22px;max-width:920px;width:100%;max-height:88vh;overflow-y:auto;padding:28px 30px 32px;position:relative;box-shadow:0 30px 70px -24px rgba(0,0,0,.4);">' +
+          '<button class="icon-btn" style="position:absolute;top:22px;right:22px;" onclick="closeShareModal()"><i data-icon="CLOSE"></i></button>' +
+          '<div id="share-modal-content"></div>' +
+        '</div>' +
+      '</div>';
+    renderShare(document.getElementById('share-modal-content'), true);
+    fillIcons();
+  }
+
+  function closeShareModal() {
+    const root = document.getElementById('share-modal-root');
+    if (root) root.innerHTML = '';
+  }
+
   function fillShareTemplate(template, e) {
+    const useShort = shareLinksShortened && shareShortLinkCache[e.id];
+    const link = useShort ? shareShortLinkCache[e.id] : (GUEST_APP_URL + '?event=' + e.id);
     return template
       .replace(/{{eventName}}/g, e.name)
       .replace(/{{companyName}}/g, STUDIO.name)
-      .replace(/{{appLink}}/g, GUEST_APP_URL + '?event=' + e.id)
-      .replace(/{{webLink}}/g, GUEST_APP_URL + '?event=' + e.id)
+      .replace(/{{appLink}}/g, link)
+      .replace(/{{webLink}}/g, link)
       .replace(/{{eventCode}}/g, e.id);
+  }
+
+  // TinyURL's classic api-create.php endpoint doesn't send CORS headers, so a fetch()
+  // read of the response can be blocked depending on the browser — tries the real
+  // fetch first (works in some environments and gives a seamless inline swap), and
+  // falls back to just opening that same real shortening request as a normal page
+  // navigation (always works, no CORS involved) if the read gets blocked. Either way
+  // this only ever shows a genuinely shortened link, never a fake placeholder one.
+  function toggleShareShortenLinks(checked, eventId) {
+    shareLinksShortened = checked;
+    const e = EVENTS.find(function (x) { return x.id === eventId; });
+    if (!e) return;
+    if (checked && !shareShortLinkCache[eventId]) {
+      const longUrl = GUEST_APP_URL + '?event=' + eventId;
+      fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl))
+        .then(function (res) { if (!res.ok) throw new Error('bad response'); return res.text(); })
+        .then(function (short) {
+          short = (short || '').trim();
+          if (short.indexOf('http') !== 0) throw new Error('unexpected response');
+          shareShortLinkCache[eventId] = short;
+          renderShareMessageContent(e);
+        })
+        .catch(function () {
+          window.open('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl), '_blank');
+          shareLinksShortened = false;
+          renderShareMessageContent(e);
+          alert('Could not shorten the link inline (blocked by the shortener\'s server) — opened it in a new tab instead. Copy the short link shown there and paste it into your message.');
+        });
+    } else {
+      renderShareMessageContent(e);
+    }
   }
 
   // Logo is stored as a small resized PNG data URL directly on the studio/profile
@@ -2958,13 +3032,22 @@
     if (e) renderShareTab(e);
   }
 
+  // Builds a real qrserver.com request URL — color/bgcolor are genuine API params (hex,
+  // no '#'), not decorative; format defaults to png but 'svg' is used for the vector
+  // download, which can't carry the canvas-composited logo (see composeQrWithLogo below).
+  function qrApiUrl(data, color, size, format) {
+    return 'https://api.qrserver.com/v1/create-qr-code/?size=' + size + 'x' + size +
+      '&data=' + encodeURIComponent(data) + '&color=' + (color || '000000').replace('#', '') +
+      '&bgcolor=FFFFFF' + (format ? '&format=' + format : '');
+  }
+
   // The free qrserver.com QR generator has no logo-embedding option of its own, so this
-  // draws the plain QR image and the uploaded logo onto a canvas together (with a small
-  // white backing square behind the logo — standard practice that keeps the QR still
-  // scannable), then swaps both the on-screen preview and the PNG download link over to
-  // that composited image. Falls back to the plain QR silently if the canvas can't be
-  // read back out (e.g. no internet, or the QR host doesn't allow cross-origin reads).
-  function composeQrWithLogo(wrapId, downloadLinkId, qrData, filename) {
+  // draws the plain (already-colored) QR image and the uploaded logo onto a canvas
+  // together (with a small white backing square behind the logo — standard practice
+  // that keeps the QR still scannable), then swaps the on-screen preview and PNG
+  // download link over to that composited image. Falls back to the plain QR silently if
+  // the canvas can't be read back out (e.g. no internet, or a cross-origin read block).
+  function composeQrWithLogo(wrapId, downloadLinkId, qrData, color, filename) {
     const wrap = document.getElementById(wrapId);
     const downloadLink = document.getElementById(downloadLinkId);
     if (!wrap) return;
@@ -2996,7 +3079,22 @@
       };
       logoImg.src = STUDIO.logoUrl;
     };
-    qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=' + encodeURIComponent(qrData);
+    qrImg.src = qrApiUrl(qrData, color, 600);
+  }
+
+  function setShareQrColor(kind, hex) {
+    if (!/^#?[0-9a-fA-F]{6}$/.test(hex)) return;
+    if (kind === 'mobile') shareQrColorMobile = hex.replace('#', '');
+    else shareQrColorWeb = hex.replace('#', '');
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (e) renderShareTab(e);
+  }
+
+  function toggleShareQrLogo(kind) {
+    if (kind === 'mobile') shareQrLogoMobile = !shareQrLogoMobile;
+    else shareQrLogoWeb = !shareQrLogoWeb;
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (e) renderShareTab(e);
   }
 
   function renderShareTab(e) {
@@ -3022,9 +3120,32 @@
       // ?event= so scanning it actually opens THIS event, not just the bare app.
       const mobileUrl = GUEST_APP_URL + '?event=' + e.id;
       const webUrl = GUEST_APP_URL + '?event=' + e.id;
+      if (!shareQrColorMobile) shareQrColorMobile = (STUDIO.brandColor || '#000000').replace('#', '');
+      if (!shareQrColorWeb) shareQrColorWeb = (STUDIO.brandColor || '#000000').replace('#', '');
+      const qrCard = function (kind, title, data, color, logoOn) {
+        const wrapId = 'qr-wrap-' + kind, dlId = 'qr-dl-' + kind, svgId = 'qr-svg-' + kind;
+        return '<div class="card" style="text-align:center;">' +
+          '<div class="card-title" style="text-align:left;">' + title + '</div>' +
+          '<div style="width:180px;height:180px;margin:10px auto;background:#fff;border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden;" id="' + wrapId + '"><img src="' + qrApiUrl(data, color, 260) + '" style="width:160px;height:160px;"></div>' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;text-align:left;">' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span style="font-size:11.5px;color:var(--muted);font-weight:700;">Color:</span>' +
+              '<input type="color" value="#' + color + '" style="width:30px;height:26px;padding:1px;border:1px solid var(--border);border-radius:6px;cursor:pointer;" onchange="setShareQrColor(\'' + kind + '\', this.value)">' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;">' +
+              '<span style="font-size:11.5px;color:var(--muted);font-weight:700;">Logo:</span>' +
+              '<label class="switch" style="transform:scale(.8);"><input type="checkbox"' + (logoOn ? ' checked' : '') + (STUDIO.logoUrl ? '' : ' disabled') + ' onchange="toggleShareQrLogo(\'' + kind + '\')"><span class="slider"></span></label>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;">' +
+            '<a class="btn-outline btn-sm" id="' + dlId + '" style="flex:1;justify-content:center;text-decoration:none;" download="qr-' + kind + '-' + e.id + '.png" href="' + qrApiUrl(data, color, 600) + '">' + ICONS.DOWNLOAD + ' PNG</a>' +
+            '<a class="btn-outline btn-sm" id="' + svgId + '" style="flex:1;justify-content:center;text-decoration:none;" download="qr-' + kind + '-' + e.id + '.svg" href="' + qrApiUrl(data, color, 600, 'svg') + '">' + ICONS.DOWNLOAD + ' SVG</a>' +
+          '</div>' +
+        '</div>';
+      };
       el.innerHTML =
         '<div class="card" style="margin-bottom:16px;"><div class="card-title">Upload Custom Logo</div>' +
-          '<div class="card-sub">Shown in the center of every QR code below.</div>' +
+          '<div class="card-sub">Shown in the center of every QR code below (PNG only — SVG stays vector-clean without it).</div>' +
           '<div style="display:flex;align-items:center;gap:12px;margin-top:10px;">' +
             (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid var(--border);">' : '') +
             '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change Logo' : 'Upload Logo') +
@@ -3035,30 +3156,33 @@
           '<div id="logo-upload-status" style="font-size:11.5px;margin-top:8px;display:none;"></div>' +
         '</div>' +
         '<div class="grid-2">' +
-          '<div class="card" style="text-align:center;">' +
-            '<div class="card-title" style="text-align:left;">QR Code for Mobile App</div>' +
-            '<div style="width:180px;height:180px;margin:10px auto;background:#fff;border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden;" id="qr-wrap-mobile"><img src="https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=' + encodeURIComponent(mobileUrl) + '" style="width:160px;height:160px;"></div>' +
-            '<a class="btn-outline" id="qr-dl-mobile" style="width:100%;justify-content:center;text-decoration:none;" download="qr-mobile-' + e.id + '.png" href="https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=' + encodeURIComponent(mobileUrl) + '">' + ICONS.DOWNLOAD + ' PNG</a>' +
-          '</div>' +
-          '<div class="card" style="text-align:center;">' +
-            '<div class="card-title" style="text-align:left;">QR Code for Web Gallery</div>' +
-            '<div style="width:180px;height:180px;margin:10px auto;background:#fff;border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden;" id="qr-wrap-web"><img src="https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=' + encodeURIComponent(webUrl) + '" style="width:160px;height:160px;"></div>' +
-            '<a class="btn-outline" id="qr-dl-web" style="width:100%;justify-content:center;text-decoration:none;" download="qr-web-' + e.id + '.png" href="https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=' + encodeURIComponent(webUrl) + '">' + ICONS.DOWNLOAD + ' PNG</a>' +
-          '</div>' +
+          qrCard('mobile', 'QR Code for Mobile App', mobileUrl, shareQrColorMobile, shareQrLogoMobile) +
+          qrCard('web', 'QR Code for Web Gallery', webUrl, shareQrColorWeb, shareQrLogoWeb) +
         '</div>';
-      if (STUDIO.logoUrl) {
-        composeQrWithLogo('qr-wrap-mobile', 'qr-dl-mobile', mobileUrl, 'qr-mobile-' + e.id + '.png');
-        composeQrWithLogo('qr-wrap-web', 'qr-dl-web', webUrl, 'qr-web-' + e.id + '.png');
-      }
+      if (STUDIO.logoUrl && shareQrLogoMobile) composeQrWithLogo('qr-wrap-mobile', 'qr-dl-mobile', mobileUrl, shareQrColorMobile, 'qr-mobile-' + e.id + '.png');
+      if (STUDIO.logoUrl && shareQrLogoWeb) composeQrWithLogo('qr-wrap-web', 'qr-dl-web', webUrl, shareQrColorWeb, 'qr-web-' + e.id + '.png');
     } else if (shareTab === 'pin') {
+      // Same e.privacy.pin field the Event Settings > Privacy & Access tab lets a
+      // studio type freely — this view just auto-generates one the first time it's
+      // opened (real Kamero shows a fixed-looking code here, not a blank field to
+      // fill in) and offers Copy/Reset instead of manual editing.
+      if (!e.privacy.pin) {
+        e.privacy.pin = generateRandomPin();
+        syncEventPrivacyToCloud(e.id, { pin: e.privacy.pin });
+      }
       el.innerHTML =
-        '<div class="card"><div class="card-title">Event PIN</div>' +
-          '<div class="card-sub">Require a PIN for full-gallery access on the web link.</div>' +
-          '<div class="field" style="max-width:260px;"><input class="input" id="share-pin-input" placeholder="e.g. 4821" value="' + (e.privacy.pin || '') + '"></div>' +
-          '<button class="btn-solid" onclick="saveSharePin()">Save PIN</button>' +
+        '<div class="card"><div class="card-title">PIN to Download and View All Photos</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;margin:14px 0 18px;flex-wrap:wrap;">' +
+            '<div id="share-pin-display" style="font-size:26px;font-weight:800;letter-spacing:5px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 22px;">' + e.privacy.pin + '</div>' +
+            '<button class="btn-solid btn-sm" onclick="copyText(document.getElementById(\'share-pin-display\').textContent)">' + ICONS.COPY + ' Copy</button>' +
+            '<button class="btn-outline btn-sm" onclick="resetSharePin()">' + ICONS.REFRESH + ' Reset</button>' +
+          '</div>' +
+          '<div class="card-title" style="font-size:12.5px;">This PIN is used for:</div>' +
+          '<ol style="margin:8px 0 0;padding-left:20px;font-size:12.5px;color:var(--muted);line-height:1.9;">' +
+            '<li>Downloading all photos (Web link only, max 5 times)</li>' +
+            '<li>Viewing all photos when privacy is enabled</li>' +
+          '</ol>' +
         '</div>';
-      const btn = el.querySelector('#share-pin-input');
-      if (btn) btn.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') saveSharePin(); });
     } else if (shareTab === 'advanced') {
       el.innerHTML =
         '<div class="card" style="margin-bottom:16px;"><div class="card-title">Link to Open Specific Album Directly</div>' +
@@ -3095,8 +3219,16 @@
       const preview = fillShareTemplate(template, e);
       el.innerHTML =
         '<div class="card">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;"><div class="card-title">Message Preview</div>' +
-            '<button class="btn-outline btn-sm" onclick="copyText(document.getElementById(\'share-msg-preview\').textContent)">' + ICONS.COPY + ' Click to copy</button></div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">' +
+            '<div class="card-title" style="margin:0;">Message Preview</div>' +
+            '<div style="display:flex;align-items:center;gap:16px;">' +
+              '<div style="display:flex;align-items:center;gap:8px;">' +
+                '<span style="font-size:12px;font-weight:700;color:var(--muted);">Shortened Links</span>' +
+                '<label class="switch"><input type="checkbox" id="share-shorten-toggle"' + (shareLinksShortened ? ' checked' : '') + ' onchange="toggleShareShortenLinks(this.checked, \'' + e.id + '\')"><span class="slider"></span></label>' +
+              '</div>' +
+              '<button class="btn-outline btn-sm" onclick="copyText(document.getElementById(\'share-msg-preview\').textContent)">' + ICONS.COPY + ' Click to copy</button>' +
+            '</div>' +
+          '</div>' +
           '<div id="share-msg-preview" style="white-space:pre-wrap;background:var(--bg);border-radius:12px;padding:16px;font-size:12.5px;line-height:1.7;margin:10px 0 14px;">' + preview + '</div>' +
           '<div style="display:flex;gap:10px;margin-bottom:16px;">' +
             '<button class="icon-btn" onclick="window.open(\'mailto:?body=\' + encodeURIComponent(document.getElementById(\'share-msg-preview\').textContent))"><i data-icon="MAIL"></i></button>' +
@@ -3146,13 +3278,17 @@
     alert('Custom message saved — it will now be used for every event\'s share message.');
   }
 
-  function saveSharePin() {
-    const input = document.getElementById('share-pin-input');
+  function generateRandomPin() {
+    return String(Math.floor(1000 + Math.random() * 9000));
+  }
+
+  function resetSharePin() {
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
-    if (!e || !input) return;
-    e.privacy.pin = input.value.trim();
+    if (!e) return;
+    if (!confirm('Generate a new PIN? The old one stops working immediately.')) return;
+    e.privacy.pin = generateRandomPin();
     syncEventPrivacyToCloud(e.id, { pin: e.privacy.pin });
-    alert(e.privacy.pin ? 'PIN saved.' : 'PIN removed — the web link is open access again.');
+    renderShareTab(e);
   }
 
   // The guest app now actually reads ?album= from the URL (see openHomeAlbum-style
