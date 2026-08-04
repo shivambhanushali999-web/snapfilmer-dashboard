@@ -737,11 +737,16 @@
         // using a stale default until some other field happened to sync. "pin" lets
         // a guest unlock the full private gallery instead of only their own matched
         // photos; "enquiry" turns on the real lead-capture form on the Gallery screen.
-        if (['privacy.faceRecognition', 'privacy.facePrivacy', 'privacy.anonymousMyPhotos', 'privacy.pin', 'privacy.enquiry'].indexOf(input.dataset.field) !== -1) {
+        // 'privacy.registration' was missing from this list entirely — the toggle updated
+        // the local e.privacy.registration value and looked like it saved, but never
+        // actually reached Firestore, so the guest app (which now reads d.registration to
+        // decide whether to show the name/phone/email gate) would never see it turned on.
+        if (['privacy.faceRecognition', 'privacy.facePrivacy', 'privacy.anonymousMyPhotos', 'privacy.registration', 'privacy.pin', 'privacy.enquiry'].indexOf(input.dataset.field) !== -1) {
           syncEventPrivacyToCloud(e.id, {
             faceRecognition: e.privacy.faceRecognition,
             facePrivacy: e.privacy.facePrivacy,
             anonymousMyPhotos: e.privacy.anonymousMyPhotos,
+            registration: e.privacy.registration,
             pin: e.privacy.pin,
             enquiry: e.privacy.enquiry,
           });
@@ -1419,7 +1424,7 @@
           toggleRowHtml('AI Face Recognition', 'Automatically detect faces so guests can find their photos via selfie.', e.privacy.faceRecognition, '', 'privacy.faceRecognition') +
           toggleRowHtml('Face-Based Privacy', 'Guests only see photos they appear in, not the full gallery.', e.privacy.facePrivacy, 'priv-facePrivacy', 'privacy.facePrivacy') +
           toggleRowHtml('Anonymous My Photos', 'Guests find their photos via selfie without logging in. If off, guests must sign in before taking a selfie.', e.privacy.anonymousMyPhotos, 'priv-anonymousMyPhotos', 'privacy.anonymousMyPhotos') +
-          toggleRowHtml('Guest Registration Required', 'Guests must enter their name/phone before viewing photos.', e.privacy.registration, '', 'privacy.registration') +
+          toggleRowHtml('Guest Registration Required', 'Guests must enter their name, phone, and email before viewing photos. See the collected list under Guests Data above.', e.privacy.registration, '', 'privacy.registration') +
           toggleRowHtml('Allow Guest Uploads', 'Let attendees contribute their own photos to the gallery.', e.privacy.guestUpload, '', 'privacy.guestUpload') +
           toggleRowHtml('Enquiry / Lead Capture Form', 'Show a contact form to collect leads from viewers.', e.privacy.enquiry, '', 'privacy.enquiry') +
         '</div>' +
@@ -1518,7 +1523,12 @@
     // it looks like it's gone; there's always a view that shows literally everything.
     const totalCount = dashboardEventPhotos.length;
     const unsortedCount = dashboardEventPhotos.filter(function (p) { return !p.album; }).length;
-    [{ key: 'ALL', label: 'All Photos', icon: 'IMAGE', count: totalCount }, { key: '', label: 'Unsorted', icon: 'FOLDER', count: unsortedCount }].forEach(function (special) {
+    // Highlights shows up as a folder-like entry right alongside All Photos/Unsorted —
+    // clicking it filters the same grid to just isHighlight:true photos, so the studio
+    // browses/manages Highlights exactly the same way as any other album instead of
+    // only being able to reach it one photo at a time from the lightbox star toggle.
+    const highlightCount = dashboardEventPhotos.filter(function (p) { return p.isHighlight; }).length;
+    [{ key: 'ALL', label: 'All Photos', icon: 'IMAGE', count: totalCount }, { key: '', label: 'Unsorted', icon: 'FOLDER', count: unsortedCount }, { key: 'HIGHLIGHTS', label: 'Highlights', icon: 'STAR', count: highlightCount }].forEach(function (special) {
       const row = document.createElement('div');
       const active = selectedAlbumFilter === special.key;
       row.className = 'toggle-row' + (active ? ' active-album' : '');
@@ -1576,6 +1586,12 @@
     dashboardPhotosUnsub = db.collection('photos').where('eventId', '==', eventId).onSnapshot(function (snap) {
       dashboardEventPhotos = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
       reconcileAlbumCounts(eventId);
+      // Highlights' "(N)" count in the sidebar isn't a stored field like named-album
+      // counts are — it's always derived live from dashboardEventPhotos — so it needs
+      // its own refresh here rather than piggybacking on reconcileAlbumCounts, which
+      // only re-renders the sidebar when a *named* album's count actually changed.
+      const ev = EVENTS.find(function (x) { return x.id === eventId; });
+      if (ev) renderAlbumSidebar(ev);
       renderEventPhotosGrid();
     }, function () {});
   }
@@ -1613,27 +1629,39 @@
     const grid = document.getElementById('ep-photo-grid');
     const targetNote = document.getElementById('ep-upload-target-note');
     if (targetNote) {
-      const targetLabel = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL') ? '"' + selectedAlbumFilter + '"' : 'Unsorted';
-      targetNote.innerHTML = 'Uploading to: <strong style="color:var(--ink);">' + targetLabel + '</strong>' +
-        (selectedAlbumFilter === 'ALL' ? ' — select a folder on the left to upload into a specific album instead.' : '');
+      const targetLabel = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? '"' + selectedAlbumFilter + '"' : 'Unsorted';
+      targetNote.innerHTML = selectedAlbumFilter === 'HIGHLIGHTS'
+        ? 'Highlights is a curated view, not an upload folder — new uploads here still go to Unsorted. Select photos in "All Photos" and use "Add to Highlights" instead.'
+        : 'Uploading to: <strong style="color:var(--ink);">' + targetLabel + '</strong>' +
+          (selectedAlbumFilter === 'ALL' ? ' — select a folder on the left to upload into a specific album instead.' : '');
     }
     if (!grid) return;
     const filtered = selectedAlbumFilter === 'ALL'
       ? dashboardEventPhotos
-      : selectedAlbumFilter
-        ? dashboardEventPhotos.filter(function (p) { return p.album === selectedAlbumFilter; })
-        : dashboardEventPhotos.filter(function (p) { return !p.album; });
-    if (titleEl) titleEl.textContent = selectedAlbumFilter === 'ALL' ? 'All Photos' : (selectedAlbumFilter || 'Unsorted Photos');
+      : selectedAlbumFilter === 'HIGHLIGHTS'
+        ? dashboardEventPhotos.filter(function (p) { return p.isHighlight; })
+        : selectedAlbumFilter
+          ? dashboardEventPhotos.filter(function (p) { return p.album === selectedAlbumFilter; })
+          : dashboardEventPhotos.filter(function (p) { return !p.album; });
+    if (titleEl) titleEl.textContent = selectedAlbumFilter === 'ALL' ? 'All Photos' : selectedAlbumFilter === 'HIGHLIGHTS' ? 'Highlights' : (selectedAlbumFilter || 'Unsorted Photos');
     if (countEl) countEl.textContent = filtered.length + ' photos' + (gridSelectMode && gridSelectedPhotoIds.length ? ' &middot; ' + gridSelectedPhotoIds.length + ' selected' : '');
     grid.innerHTML = '';
     if (!filtered.length) {
-      grid.innerHTML = '<div class="empty-note">No photos here yet — upload above to add some to ' + (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' ? '"' + selectedAlbumFilter + '"' : 'this event') + '.</div>';
+      grid.innerHTML = '<div class="empty-note">' +
+        (selectedAlbumFilter === 'HIGHLIGHTS'
+          ? 'No Highlights yet — go to "All Photos", tap Select, choose photos, then "Add to Highlights".'
+          : 'No photos here yet — upload above to add some to ' + (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' ? '"' + selectedAlbumFilter + '"' : 'this event') + '.') +
+        '</div>';
       return;
     }
     if (gridSelectMode && gridSelectedPhotoIds.length) {
       const bar = document.createElement('div');
-      bar.style.cssText = 'grid-column:1/-1;display:flex;justify-content:flex-end;margin-bottom:4px;';
-      bar.innerHTML = '<button class="btn-danger btn-sm" onclick="deleteSelectedPhotos()">' + ICONS.TRASH + ' Delete ' + gridSelectedPhotoIds.length + ' Selected</button>';
+      bar.style.cssText = 'grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;';
+      bar.innerHTML =
+        (selectedAlbumFilter === 'HIGHLIGHTS'
+          ? '<button class="btn-outline btn-sm" onclick="removeSelectedFromHighlights()">' + ICONS.STAR + ' Remove ' + gridSelectedPhotoIds.length + ' from Highlights</button>'
+          : '<button class="btn-outline btn-sm" onclick="addSelectedToHighlights()">' + ICONS.STAR + ' Add ' + gridSelectedPhotoIds.length + ' to Highlights</button>') +
+        '<button class="btn-danger btn-sm" onclick="deleteSelectedPhotos()">' + ICONS.TRASH + ' Delete ' + gridSelectedPhotoIds.length + ' Selected</button>';
       grid.appendChild(bar);
     }
     filtered.forEach(function (p, idx) {
@@ -1641,6 +1669,7 @@
       const cell = document.createElement('div');
       cell.style.cssText = 'aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--bg);position:relative;cursor:pointer;' + (selected ? 'outline:3px solid var(--accent-ink);outline-offset:-3px;' : '');
       cell.innerHTML = '<img src="' + p.dataUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+        (p.isHighlight ? '<div style="position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:50%;background:rgba(20,16,20,.55);display:flex;align-items:center;justify-content:center;color:#f5c451;" title="Highlighted">' + ICONS.STAR + '</div>' : '') +
         (gridSelectMode ? '<div style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:' + (selected ? 'var(--accent-ink)' : 'rgba(255,255,255,.85)') + ';border:1px solid rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;color:#fff;">' + (selected ? ICONS.CHECK : '') + '</div>' : '');
       cell.addEventListener('click', function () {
         if (gridSelectMode) toggleSelectPhoto(p.id);
@@ -2147,7 +2176,10 @@
     // to Unsorted, same as before, but now #ep-upload-target-note always tells the
     // studio exactly where a photo is about to land *before* they click Upload, so a
     // photo can no longer land somewhere unexpected without them seeing it first.
-    const albumName = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL') ? selectedAlbumFilter : '';
+    // 'HIGHLIGHTS' is a curated view, not a real album — falls back to Unsorted here
+    // exactly like 'ALL' does, so an upload made while browsing Highlights can't end up
+    // tagged with a phantom album named "HIGHLIGHTS" that no sidebar row corresponds to.
+    const albumName = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? selectedAlbumFilter : '';
     const queue = document.getElementById('ep-upload-queue');
     if (!storage || !db) {
       if (queue) queue.innerHTML = '<div style="padding:9px 0;font-size:12.5px;">No cloud connection</div>';
@@ -2319,6 +2351,40 @@
     }).catch(function () { alert('Could not delete some photos — please try again.'); });
   }
 
+  // Bulk Highlight actions — lets the studio select a batch of photos from the main
+  // grid (same Select mode already used for bulk delete) and move them all into the
+  // Highlights folder-view in one go, instead of opening each photo's lightbox and
+  // starring it one at a time. Mirrors deleteSelectedPhotos()'s pattern exactly.
+  function addSelectedToHighlights() {
+    if (!gridSelectedPhotoIds.length || !db) return;
+    const ids = gridSelectedPhotoIds.slice();
+    Promise.all(ids.map(function (id) { return db.collection('photos').doc(id).set({ isHighlight: true }, { merge: true }); })).then(function () {
+      ids.forEach(function (id) {
+        const p = dashboardEventPhotos.find(function (x) { return x.id === id; });
+        if (p) p.isHighlight = true;
+      });
+      gridSelectedPhotoIds = [];
+      toggleGridSelectMode();
+      const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+      if (e) renderAlbumSidebar(e);
+    }).catch(function () { alert('Could not add some photos to Highlights — please try again.'); });
+  }
+
+  function removeSelectedFromHighlights() {
+    if (!gridSelectedPhotoIds.length || !db) return;
+    const ids = gridSelectedPhotoIds.slice();
+    Promise.all(ids.map(function (id) { return db.collection('photos').doc(id).set({ isHighlight: false }, { merge: true }); })).then(function () {
+      ids.forEach(function (id) {
+        const p = dashboardEventPhotos.find(function (x) { return x.id === id; });
+        if (p) p.isHighlight = false;
+      });
+      gridSelectedPhotoIds = [];
+      toggleGridSelectMode();
+      const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+      if (e) renderAlbumSidebar(e);
+    }).catch(function () { alert('Could not remove some photos from Highlights — please try again.'); });
+  }
+
   // ================= Event Detail action panels =================
   // Real Kamero's Admin Request / Guests Data are lightweight inline panels toggled
   // from the top bar, not separate pages — matching that here instead of a full modal.
@@ -2382,20 +2448,103 @@
     }).catch(function () { body.innerHTML = '<div class="empty-note">Could not load enquiries.</div>'; });
   }
 
+  // Holds the last-fetched real registration docs for the currently-open panel, so
+  // downloadGuestsCSV() can export exactly what's on screen without re-querying.
+  let GUEST_REGISTRATIONS = [];
+
   function toggleGuestsDataPanel() {
     const panel = document.getElementById('ed-action-panel');
     if (!panel) return;
     if (panel.dataset.open === 'guests') { panel.innerHTML = ''; panel.dataset.open = ''; return; }
     panel.dataset.open = 'guests';
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    // guests/views above stay as this event's overall view-tracking counters (separate
+    // concept from registration — a guest can view the gallery without ever registering
+    // unless Guest Registration Required is on). The per-guest list below is the real,
+    // individually-downloadable data: actual documents in Firestore's guestRegistrations
+    // collection, written by submitGuestRegistration() in the guest app the moment someone
+    // fills the name/phone/email gate — not derived from the counters above.
     panel.innerHTML = '<div class="card" style="margin-bottom:20px;"><div class="card-title">Guests Data</div>' +
       '<div class="card-sub">People who have viewed or registered on this event\'s gallery</div>' +
       '<div style="display:flex;gap:24px;margin-top:6px;">' +
         '<div><div style="font-size:22px;font-weight:800;">' + (e ? e.guests.toLocaleString() : 0) + '</div><div style="color:var(--muted);font-size:12px;">Total Guests</div></div>' +
         '<div><div style="font-size:22px;font-weight:800;">' + (e ? e.views.toLocaleString() : 0) + '</div><div style="color:var(--muted);font-size:12px;">Gallery Views</div></div>' +
       '</div>' +
-      '<div class="empty-note" style="margin-top:14px;">Per-guest name/phone list appears here once Guest Registration is enabled in Privacy &amp; Access for this event.</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:20px;">' +
+        '<div style="font-weight:700;font-size:13.5px;">Registered Guests</div>' +
+        '<button class="btn-outline btn-sm" id="guests-download-btn" onclick="downloadGuestsCSV()" disabled>' + ICONS.DOWNLOAD + ' Download CSV</button>' +
+      '</div>' +
+      '<div id="guests-list-body" style="margin-top:10px;"><div class="empty-note">Loading&hellip;</div></div>' +
       '</div>';
+
+    if (!db) {
+      document.getElementById('guests-list-body').innerHTML = '<div class="empty-note">Could not connect to load registered guests.</div>';
+      return;
+    }
+    // where() only (no orderBy) so this doesn't need a composite Firestore index — sorted
+    // client-side instead, newest first.
+    db.collection('guestRegistrations').where('eventId', '==', currentEventId).get().then(function (snap) {
+      GUEST_REGISTRATIONS = snap.docs.map(function (d) { return d.data(); });
+      GUEST_REGISTRATIONS.sort(function (a, b) {
+        const at = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+        const bt = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+        return bt - at;
+      });
+      const body = document.getElementById('guests-list-body');
+      const btn = document.getElementById('guests-download-btn');
+      if (!body) return;
+      if (!GUEST_REGISTRATIONS.length) {
+        body.innerHTML = '<div class="empty-note">' +
+          (e && e.privacy && e.privacy.registration
+            ? 'No one has registered yet — this fills in as guests enter their details.'
+            : 'Guest Registration is off for this event, so no name/phone/email is being collected. Turn it on in Privacy &amp; Access to start collecting this.') +
+          '</div>';
+        return;
+      }
+      if (btn) btn.disabled = false;
+      body.innerHTML = '<div class="table-card"><table><thead><tr>' +
+        '<th>Name</th><th>Phone</th><th>Email</th><th>Registered</th>' +
+        '</tr></thead><tbody>' +
+        GUEST_REGISTRATIONS.map(function (g) {
+          const when = g.createdAt && g.createdAt.toDate ? g.createdAt.toDate().toLocaleString() : '—';
+          return '<tr><td>' + escapeHtmlGD(g.name || '—') + '</td><td>' + escapeHtmlGD(g.phone || '—') + '</td>' +
+            '<td>' + escapeHtmlGD(g.email || '—') + '</td><td>' + when + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }).catch(function () {
+      const body = document.getElementById('guests-list-body');
+      if (body) body.innerHTML = '<div class="empty-note">Could not load registered guests.</div>';
+    });
+  }
+
+  function escapeHtmlGD(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // Real CSV export of whatever's currently loaded in GUEST_REGISTRATIONS — no fake rows,
+  // and simply disabled (see the button above) when there's nothing real to export yet.
+  function downloadGuestsCSV() {
+    if (!GUEST_REGISTRATIONS.length) return;
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    const csvEscape = function (v) {
+      const s = v === null || v === undefined ? '' : String(v);
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    const rows = [['Name', 'Phone', 'Email', 'Registered At'].map(csvEscape).join(',')];
+    GUEST_REGISTRATIONS.forEach(function (g) {
+      const when = g.createdAt && g.createdAt.toDate ? g.createdAt.toDate().toISOString() : '';
+      rows.push([g.name || '', g.phone || '', g.email || '', when].map(csvEscape).join(','));
+    });
+    const blob = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'guests-' + (e ? e.id : currentEventId) + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   let importTab = 'import';
