@@ -2343,10 +2343,32 @@
   }
 
   function syncEventPrivacyToCloud(eventId, patch) {
-    if (!db) return;
-    db.collection('events').doc(eventId).set(patch, { merge: true }).catch(function () {
-      // Offline / no connection — the toggle still updates locally in this dashboard session.
+    if (!db) { showSyncFailureToast(null); return; }
+    db.collection('events').doc(eventId).set(patch, { merge: true }).catch(function (err) {
+      // This used to be silently swallowed — every toggle/album add/highlight change
+      // updates the local UI instantly (optimistic), so it always LOOKED saved. But if
+      // the actual Firestore write failed (permission rules, quota, offline), nothing
+      // was really persisted — and the next refresh would quietly revert it with zero
+      // explanation. Surfacing the failure is what makes "did this actually save?"
+      // answerable instead of a mystery.
+      showSyncFailureToast(err);
     });
+  }
+
+  let syncFailureToastTimer = null;
+  function showSyncFailureToast(err) {
+    let toast = document.getElementById('sync-failure-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'sync-failure-toast';
+      toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#D0342C;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:700;z-index:500;box-shadow:0 12px 30px -10px rgba(0,0,0,.4);max-width:90vw;text-align:center;';
+      document.body.appendChild(toast);
+    }
+    const code = err && err.code ? ' (' + err.code + ')' : '';
+    toast.textContent = 'Could not save your last change — it will be lost on refresh unless you retry.' + code;
+    toast.style.display = 'block';
+    if (syncFailureToastTimer) clearTimeout(syncFailureToastTimer);
+    syncFailureToastTimer = setTimeout(function () { toast.style.display = 'none'; }, 7000);
   }
 
   function deleteEvent() {
