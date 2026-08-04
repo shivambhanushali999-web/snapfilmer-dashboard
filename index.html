@@ -1301,15 +1301,12 @@
           '</div>' +
         '</div>' +
         '<div style="flex:1;min-width:0;">' +
-          // Settings tabs live up here, right below the header, instead of after the
-          // whole photo grid — with events running into the thousands of photos, that
-          // used to mean scrolling past every single photo just to reach Watermark/
-          // Downloads/Privacy settings. The "Settings" button in the header above jumps
-          // straight here now, since it's actually in view without scrolling past photos.
-          '<div class="tabs-row" id="ed-tabs">' +
-            tabBtn('general', 'General', true) + tabBtn('privacy', 'Privacy & Access') + tabBtn('downloads', 'Downloads') + tabBtn('watermark', 'Watermark') +
-          '</div>' +
-          '<div id="ed-content" style="margin-bottom:26px;"></div>' +
+          // General/Privacy/Downloads/Watermark used to live inline right here, above
+          // the upload cards and photo grid — meaning "click Settings" only scrolled to
+          // them while albums/grid/everything else stayed visible around them at the
+          // same time. That content now lives ONLY in the fully isolated view opened by
+          // the "Settings" button above (see renderEventSettingsOnly) — this normal view
+          // is just albums + upload + photo grid, nothing settings-related mixed in.
           '<div id="ep-upload-target-note" style="font-size:11.5px;color:var(--muted);margin-bottom:8px;"></div>' +
           '<div class="grid-2" style="margin-bottom:20px;">' +
             '<div class="card" style="border:2px dashed var(--border);">' +
@@ -1344,14 +1341,6 @@
         '</div>' +
       '</div>';
 
-    document.querySelectorAll('#ed-tabs .tab-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        document.querySelectorAll('#ed-tabs .tab-btn').forEach(function (b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        renderEventDetailTab(btn.dataset.tab, e);
-      });
-    });
-    renderEventDetailTab('general', e);
     // Default to "All Photos" every time an event is opened — defaulting into
     // whichever album happened to be first used to silently hide any photo that was
     // uploaded into a different album (or Unsorted), which looked exactly like the
@@ -1381,10 +1370,6 @@
           if (Array.isArray(d.albums)) e.albums = d.albums;
         }
         renderAlbumSidebar(e);
-        const activeTab = document.querySelector('#ed-tabs .tab-btn.active');
-        if (activeTab && activeTab.dataset.tab === 'privacy') {
-          renderEventDetailTab('privacy', e);
-        }
       }).catch(function () {});
     }
   }
