@@ -1722,7 +1722,7 @@
     if (targetNote) {
       const targetLabel = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? '"' + selectedAlbumFilter + '"' : 'Unsorted';
       targetNote.innerHTML = selectedAlbumFilter === 'HIGHLIGHTS'
-        ? 'Highlights is a curated view, not an upload folder — new uploads here still go to Unsorted. Select photos in "All Photos" and use "Add to Highlights" instead.'
+        ? 'Uploading to: <strong style="color:var(--ink);">Highlights</strong> — new photos here are automatically marked as highlighted (and stay visible to every guest, even with Face-Based Privacy on).'
         : 'Uploading to: <strong style="color:var(--ink);">' + targetLabel + '</strong>' +
           (selectedAlbumFilter === 'ALL' ? ' — select a folder on the left to upload into a specific album instead.' : '');
     }
@@ -1740,7 +1740,7 @@
     if (!filtered.length) {
       grid.innerHTML = '<div class="empty-note">' +
         (selectedAlbumFilter === 'HIGHLIGHTS'
-          ? 'No Highlights yet — go to "All Photos", tap Select, choose photos, then "Add to Highlights".'
+          ? 'No Highlights yet — upload photos right here to mark them highlighted automatically, or go to "All Photos", tap Select, choose photos, then "Add to Highlights".'
           : 'No photos here yet — upload above to add some to ' + (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' ? '"' + selectedAlbumFilter + '"' : 'this event') + '.') +
         '</div>';
       return;
@@ -2187,6 +2187,7 @@
           writer.add(ref, {
             eventId: opts.eventId, album: opts.albumName, quality: opts.quality, dataUrl: url,
             filename: file.name, camera: exif.camera || null, lens: exif.lens || null, capturedAt: exif.capturedAt || null,
+            isHighlight: !!opts.markHighlight,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           });
           indexPhotoFace(opts.eventId, ref.id, url);
@@ -2271,6 +2272,12 @@
     // exactly like 'ALL' does, so an upload made while browsing Highlights can't end up
     // tagged with a phantom album named "HIGHLIGHTS" that no sidebar row corresponds to.
     const albumName = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? selectedAlbumFilter : '';
+    // Uploading while Highlights is the selected folder marks the new photos
+    // isHighlight:true directly — matches the real Kamero tooltip's own wording
+    // ("Upload or move selected photos here to make them public"). They still also
+    // land in Unsorted (album stays '') since Highlights isn't a real album a photo
+    // can "live in" instead of one — it's an additional flag on top.
+    const markHighlight = selectedAlbumFilter === 'HIGHLIGHTS';
     const queue = document.getElementById('ep-upload-queue');
     if (!storage || !db) {
       if (queue) queue.innerHTML = '<div style="padding:9px 0;font-size:12.5px;">No cloud connection</div>';
@@ -2278,7 +2285,7 @@
     }
     let uploadedInBatch = 0;
     uploadPhotosWithPool(files, {
-      eventId: eventId, albumName: albumName, quality: quality,
+      eventId: eventId, albumName: albumName, quality: quality, markHighlight: markHighlight,
       resize: function (file) { return prepareUploadBlob(file, quality); },
       onFileStart: function (file) {
         const row = document.createElement('div');
