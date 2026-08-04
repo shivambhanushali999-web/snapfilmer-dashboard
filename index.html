@@ -412,7 +412,7 @@
       id: 'vaibhav-komal', name: 'Vaibhav & Komal Wedding', date: '2026-08-14', cover: 'https://picsum.photos/seed/dsh1/300/300',
       photos: 1240, photoLimit: 5000, guests: 312, views: 8900, status: 'active', validUpto: '2026-12-19',
       albums: [{ name: 'Haldi', count: 180 }, { name: 'Sangeet', count: 260 }, { name: 'Wedding', count: 620 }, { name: 'Reception', count: 180 }],
-      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: true, guestUpload: true, pin: '4821', coHosts: ['ronit@studio.com'], enquiry: true, disabled: false },
+      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: true, guestUpload: true, guestUploadLimit: 10, pin: '4821', coHosts: ['ronit@studio.com'], enquiry: true, disabled: false },
       downloads: { permission: 'all', anonymous: true, originalQuality: false },
       watermark: freshEventWatermark(),
       videos: [], highlightEnabled: false,
@@ -823,6 +823,7 @@
         '<div class="content"><div class="page active" id="page-content"></div></div>' +
       '</div>' +
       '<div id="share-modal-root"></div>' +
+      '<div id="guest-upload-modal-root"></div>' +
       '<div id="lightbox-root"></div>';
     renderSidebar();
   }
@@ -1227,7 +1228,7 @@
       id: id, name: 'Untitled Event', date: new Date().toISOString().slice(0, 10), cover: 'https://picsum.photos/seed/' + id + '/300/300',
       photos: 0, photoLimit: 500, guests: 0, views: 0, status: 'active', validUpto: STUDIO.renewalDate,
       albums: [],
-      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, pin: '', coHosts: [], enquiry: false, disabled: false },
+      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: false, disabled: false },
       downloads: { permission: 'all', anonymous: true, originalQuality: false },
       watermark: freshEventWatermark(),
       videos: [], highlightEnabled: false,
@@ -1425,7 +1426,12 @@
           toggleRowHtml('Face-Based Privacy', 'Guests only see photos they appear in, not the full gallery.', e.privacy.facePrivacy, 'priv-facePrivacy', 'privacy.facePrivacy') +
           toggleRowHtml('Anonymous My Photos', 'Guests find their photos via selfie without logging in. If off, guests must sign in before taking a selfie.', e.privacy.anonymousMyPhotos, 'priv-anonymousMyPhotos', 'privacy.anonymousMyPhotos') +
           toggleRowHtml('Guest Registration Required', 'Guests must enter their name, phone, and email before viewing photos. See the collected list under Guests Data above.', e.privacy.registration, '', 'privacy.registration') +
-          toggleRowHtml('Allow Guest Uploads', 'Let attendees contribute their own photos to the gallery.', e.privacy.guestUpload, '', 'privacy.guestUpload') +
+          // No data-field here on purpose — turning this ON needs to first collect a
+          // guest upload limit via a confirmation modal (see openGuestUploadLimitModal
+          // below), so it can't just auto-save through the generic wireSettingsFields
+          // path like every other toggle on this tab does. Wired specially right after
+          // wireSettingsFields() runs, a few lines down.
+          toggleRowHtml('Allow Guest Uploads', 'Let attendees contribute their own photos to the gallery.' + (e.privacy.guestUpload ? ' Limit: ' + (e.privacy.guestUploadLimit || 0) + ' photos.' : ''), e.privacy.guestUpload, 'priv-guestUpload', '') +
           toggleRowHtml('Enquiry / Lead Capture Form', 'Show a contact form to collect leads from viewers.', e.privacy.enquiry, '', 'privacy.enquiry') +
         '</div>' +
         '<div class="grid-2" style="margin-top:16px;">' +
@@ -1479,6 +1485,23 @@
       el.querySelectorAll('[data-remove-cohost]').forEach(function (btn) {
         btn.addEventListener('click', function () { removeCoHost(btn.dataset.removeCohost); });
       });
+      // Allow Guest Uploads: flipping it ON needs a limit set first (real Kamero shows
+      // this exact confirmation before enabling), so this toggle is deliberately left
+      // out of wireSettingsFields()'s auto-save and wired here instead. Turning it OFF
+      // needs no confirmation and saves immediately, same as every other toggle.
+      const guBtn = document.getElementById('priv-guestUpload');
+      if (guBtn) {
+        guBtn.addEventListener('change', function () {
+          if (guBtn.checked) {
+            guBtn.checked = false;
+            openGuestUploadLimitModal(e.id);
+          } else {
+            e.privacy.guestUpload = false;
+            syncEventPrivacyToCloud(e.id, { guestUpload: false });
+            renderEventDetailTab('privacy', e);
+          }
+        });
+      }
     }
     fillIcons();
   }
@@ -1528,12 +1551,25 @@
     // browses/manages Highlights exactly the same way as any other album instead of
     // only being able to reach it one photo at a time from the lightbox star toggle.
     const highlightCount = dashboardEventPhotos.filter(function (p) { return p.isHighlight; }).length;
-    [{ key: 'ALL', label: 'All Photos', icon: 'IMAGE', count: totalCount }, { key: '', label: 'Unsorted', icon: 'FOLDER', count: unsortedCount }, { key: 'HIGHLIGHTS', label: 'Highlights', icon: 'STAR', count: highlightCount }].forEach(function (special) {
+    // The Highlights row only exists in this list while Highlight is actually turned
+    // on for the event (e.highlightEnabled) — disabling it should make the whole
+    // folder-view disappear from the sidebar again, same as if it never had photos in
+    // it, rather than leaving a dead/empty entry sitting there permanently.
+    const specials = [{ key: 'ALL', label: 'All Photos', icon: 'IMAGE', count: totalCount }, { key: '', label: 'Unsorted', icon: 'FOLDER', count: unsortedCount }];
+    if (e.highlightEnabled) specials.push({ key: 'HIGHLIGHTS', label: 'Highlights', icon: 'STAR', count: highlightCount, round: true });
+    if (selectedAlbumFilter === 'HIGHLIGHTS' && !e.highlightEnabled) selectedAlbumFilter = 'ALL';
+    specials.forEach(function (special) {
       const row = document.createElement('div');
       const active = selectedAlbumFilter === special.key;
       row.className = 'toggle-row' + (active ? ' active-album' : '');
       row.style.cssText = 'padding:9px 8px;margin:0 -8px;border-radius:8px;cursor:pointer;' + (active ? 'background:var(--accent-soft);' : '');
-      row.innerHTML = '<div class="t" style="display:flex;align-items:center;gap:8px;font-size:12.5px;' + (active ? 'color:var(--accent-ink);font-weight:800;' : '') + '"><i data-icon="' + special.icon + '"></i>' + special.label + ' <span style="color:var(--muted);font-weight:600;">(' + special.count + ')</span></div>';
+      // Highlights gets a round icon badge (gold circle) instead of the plain square-ish
+      // outline icons the other folders use, so it visually reads as its own distinct,
+      // curated thing rather than just another album in the list.
+      const iconHtml = special.round
+        ? '<span style="width:18px;height:18px;border-radius:50%;background:var(--accent-gold,#B08A4A);color:#fff;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;"><i data-icon="' + special.icon + '" style="width:11px;height:11px;"></i></span>'
+        : '<i data-icon="' + special.icon + '"></i>';
+      row.innerHTML = '<div class="t" style="display:flex;align-items:center;gap:8px;font-size:12.5px;' + (active ? 'color:var(--accent-ink);font-weight:800;' : '') + '">' + iconHtml + special.label + ' <span style="color:var(--muted);font-weight:600;">(' + special.count + ')</span></div>';
       row.addEventListener('click', function () { selectAlbum(special.key); });
       list.appendChild(row);
     });
@@ -2679,6 +2715,12 @@
     syncEventPrivacyToCloud(e.id, { highlightEnabled: e.highlightEnabled });
     const btn = document.getElementById('ed-highlight-btn');
     if (btn) btn.innerHTML = ICONS.STAR + ' ' + (e.highlightEnabled ? 'Highlight Enabled' : 'Enable Highlight');
+    // Highlights folder in the sidebar (and whatever's currently open in the grid)
+    // needs to appear/disappear the instant this is toggled, not just on next reload —
+    // renderAlbumSidebar() itself falls back selectedAlbumFilter off 'HIGHLIGHTS' when
+    // turning off, so the grid re-render right after picks that up correctly too.
+    renderAlbumSidebar(e);
+    renderEventPhotosGrid();
     fillIcons();
   }
 
@@ -3090,6 +3132,53 @@
   function closeShareModal() {
     const root = document.getElementById('share-modal-root');
     if (root) root.innerHTML = '';
+  }
+
+  // Matches real Kamero's confirmation step for "Allow Guest Uploads": turning it on
+  // isn't a bare toggle — the studio sets a limit here first, reserved separately from
+  // the event's own photo limit, and that's what the guest app actually enforces (see
+  // handleGuestPhotoUpload() in the guest app, which counts photos flagged
+  // guestUploaded:true against this same number).
+  function openGuestUploadLimitModal(eventId) {
+    const root = document.getElementById('guest-upload-modal-root');
+    const e = EVENTS.find(function (x) { return x.id === eventId; });
+    if (!root || !e) return;
+    const currentLimit = e.privacy.guestUploadLimit || 10;
+    root.innerHTML =
+      '<div style="position:fixed;inset:0;background:rgba(20,16,20,.5);z-index:300;display:flex;align-items:center;justify-content:center;padding:24px;" onmousedown="if(event.target===this)closeGuestUploadLimitModal()">' +
+        '<div style="background:var(--surface);border-radius:18px;max-width:420px;width:100%;padding:26px 26px 22px;position:relative;box-shadow:0 30px 70px -24px rgba(0,0,0,.4);">' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
+            '<div style="width:32px;height:32px;border-radius:50%;background:#F0A63E;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + ICONS.WARNING + '</div>' +
+            '<div class="card-title" style="margin:0;">Set guest photo upload limit</div>' +
+          '</div>' +
+          '<p style="font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 16px;">This is the limit you set for guests to upload photos from their phones. It\'s reserved separately from your event or subscription limit. For example, if your event allows 1,000 photos and you set a guest limit of 50, you can upload 950, and 50 are reserved for guests.</p>' +
+          '<div class="field"><input class="input" type="number" min="1" step="1" id="guest-upload-limit-input" value="' + currentLimit + '"></div>' +
+          '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">' +
+            '<button class="btn-outline btn-sm" onclick="closeGuestUploadLimitModal()">Cancel</button>' +
+            '<button class="btn-solid btn-sm" onclick="confirmGuestUploadLimit(\'' + eventId + '\')">Enable</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    fillIcons();
+    const input = document.getElementById('guest-upload-limit-input');
+    if (input) input.focus();
+  }
+
+  function closeGuestUploadLimitModal() {
+    const root = document.getElementById('guest-upload-modal-root');
+    if (root) root.innerHTML = '';
+  }
+
+  function confirmGuestUploadLimit(eventId) {
+    const e = EVENTS.find(function (x) { return x.id === eventId; });
+    const input = document.getElementById('guest-upload-limit-input');
+    if (!e || !input) return;
+    const limit = Math.max(1, parseInt(input.value, 10) || 10);
+    e.privacy.guestUpload = true;
+    e.privacy.guestUploadLimit = limit;
+    syncEventPrivacyToCloud(eventId, { guestUpload: true, guestUploadLimit: limit });
+    closeGuestUploadLimitModal();
+    if (currentEventId === eventId) renderEventDetailTab('privacy', e);
   }
 
   function fillShareTemplate(template, e) {
@@ -3593,7 +3682,8 @@
       // defaults so nothing crashes rendering an event created before this sync existed.
       EVENTS.forEach(function (e) {
         if (!e.albums) e.albums = [];
-        if (!e.privacy) e.privacy = { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, pin: '', coHosts: [], enquiry: false, disabled: false };
+        if (!e.privacy) e.privacy = { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: false, disabled: false };
+        if (e.privacy.guestUploadLimit === undefined) e.privacy.guestUploadLimit = 10;
         if (!e.downloads) e.downloads = { permission: 'all', anonymous: true, originalQuality: false };
         migrateEventWatermarkShape(e);
         if (!e.videos) e.videos = [];
