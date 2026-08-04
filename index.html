@@ -466,6 +466,11 @@
   let dashboardPhotosUnsub = null;
   let gridSelectMode = false;
   let gridSelectedPhotoIds = [];
+  // Whether the Event Detail page is currently showing the isolated Settings view
+  // (just the tabs — General/Privacy/Downloads/Watermark) instead of the normal view
+  // (albums sidebar + upload cards + photo grid). Reset to false any time a *different*
+  // event is opened via showPage() below, so it can never leak into a new event's page.
+  let edSettingsView = false;
 
   // ---- Firebase (Firestore) — same project as the guest app ----
   const firebaseConfig = {
@@ -915,6 +920,7 @@
   function showPage(name, param) {
     currentPage = name;
     if (param) currentEventId = param;
+    if (name === 'event-detail') edSettingsView = false;
     document.getElementById('page-title').textContent = PAGE_TITLES[name] || '';
     document.querySelectorAll('.nav-link').forEach(function (l) { l.classList.toggle('active', l.dataset.page === name); });
     const el = document.getElementById('page-content');
@@ -1247,6 +1253,10 @@
   // ================= Event Detail =================
   function renderEventDetail(el) {
     const e = EVENTS.find(function (x) { return x.id === currentEventId; }) || EVENTS[0];
+    if (edSettingsView) {
+      renderEventSettingsOnly(el, e);
+      return;
+    }
     el.innerHTML =
       '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="showPage(\'events\')">' + ICONS.BACK + ' Back to Events</button>' +
       '<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">' +
@@ -1380,22 +1390,82 @@
   }
 
   // Event-level settings (Face Recognition, Guest Registration, download permissions,
-  // watermark, etc.) live in the tabs right below the header now (moved up from below
-  // the photo grid, which used to mean scrolling past every photo to find them). This
-  // header button jumps straight to Privacy & Access — the tab that covers face
-  // recognition, guest registration, and "who can see personal photos" — with Downloads
-  // and the other tabs just one click away right there.
+  // watermark, etc.) used to just be tabs sitting inline above the photo grid — jumping
+  // here via scrollIntoView still left albums/upload cards/the whole grid visible at
+  // the same time. Real Kamero treats Settings as its own isolated page (nothing else
+  // from the event visible), so this now swaps the Event Detail page into that
+  // dedicated view instead of just scrolling to it — see renderEventSettingsOnly below.
   function openEventSettings() {
-    const tabsEl = document.getElementById('ed-tabs');
-    if (!tabsEl) return;
-    const privacyBtn = tabsEl.querySelector('[data-tab="privacy"]');
-    if (privacyBtn) {
-      tabsEl.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
-      privacyBtn.classList.add('active');
-      const e = EVENTS.find(function (x) { return x.id === currentEventId; });
-      if (e) renderEventDetailTab('privacy', e);
+    edSettingsView = true;
+    const el = document.getElementById('page-content');
+    if (el) renderEventDetail(el);
+  }
+
+  function closeEventSettingsView() {
+    edSettingsView = false;
+    const el = document.getElementById('page-content');
+    if (el) renderEventDetail(el);
+  }
+
+  // Isolated Settings view for an event — just the General/Privacy/Downloads/Watermark
+  // tabs, with a dedicated header (back arrow, event name, PIN) instead of the albums
+  // sidebar + upload cards + photo grid that normally surround them. Reuses the exact
+  // same tab buttons / renderEventDetailTab() / live-Firestore-pull logic as the normal
+  // view, so nothing about how settings actually save is different — only what's on
+  // screen around them.
+  function renderEventSettingsOnly(el, e) {
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:22px;">' +
+        '<div style="display:flex;align-items:center;gap:14px;">' +
+          '<button class="btn-ghost btn-sm" onclick="closeEventSettingsView()" title="Back">' + ICONS.BACK + '</button>' +
+          '<div style="font-size:20px;font-weight:800;">Event Settings <span style="color:var(--muted);font-weight:600;">- [' + e.name + ']</span></div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<span class="pill gray" style="font-weight:700;">PIN: ' + (e.privacy.pin || '&mdash;') + '</span>' +
+          '<button class="icon-btn" title="Copy PIN" onclick="copyText(\'' + (e.privacy.pin || '') + '\')">' + ICONS.COPY + '</button>' +
+          '<button class="icon-btn" title="Refresh" onclick="renderEventDetail(document.getElementById(\'page-content\'))">' + ICONS.REFRESH + '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="tabs-row" id="ed-tabs">' +
+        tabBtn('general', 'General') + tabBtn('privacy', 'Privacy & Access', true) + tabBtn('downloads', 'Downloads') + tabBtn('watermark', 'Watermark') +
+      '</div>' +
+      '<div id="ed-content" style="margin-bottom:26px;"></div>';
+
+    document.querySelectorAll('#ed-tabs .tab-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('#ed-tabs .tab-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        renderEventDetailTab(btn.dataset.tab, e);
+      });
+    });
+    // Jumps straight to Privacy & Access — the tab that covers face recognition, guest
+    // registration, guest uploads, and "who can see personal photos" — with Downloads
+    // and the other tabs just one click away right there.
+    renderEventDetailTab('privacy', e);
+    fillIcons();
+
+    // Same live-privacy pull the normal view does, so PIN/toggles here can't show a
+    // stale value if the dashboard was reloaded after a previous session's changes.
+    if (db) {
+      db.collection('events').doc(e.id).get().then(function (doc) {
+        if (!doc.exists) return;
+        const d = doc.data();
+        if (typeof d.facePrivacy === 'boolean') e.privacy.facePrivacy = d.facePrivacy;
+        if (typeof d.faceRecognition === 'boolean') e.privacy.faceRecognition = d.faceRecognition;
+        if (typeof d.anonymousMyPhotos === 'boolean') e.privacy.anonymousMyPhotos = d.anonymousMyPhotos;
+        if (typeof d.registration === 'boolean') e.privacy.registration = d.registration;
+        if (typeof d.guestUpload === 'boolean') e.privacy.guestUpload = d.guestUpload;
+        if (typeof d.guestUploadLimit === 'number') e.privacy.guestUploadLimit = d.guestUploadLimit;
+        if (typeof d.pin === 'string') e.privacy.pin = d.pin;
+        if (typeof d.enquiry === 'boolean') e.privacy.enquiry = d.enquiry;
+        if (Array.isArray(d.coHosts)) e.privacy.coHosts = d.coHosts;
+        if (!edSettingsView) return; // guest navigated away before this resolved
+        const pinChip = el.querySelector('.pill');
+        if (pinChip) pinChip.textContent = 'PIN: ' + (e.privacy.pin || '—');
+        const activeTab = document.querySelector('#ed-tabs .tab-btn.active');
+        if (activeTab) renderEventDetailTab(activeTab.dataset.tab, e);
+      }).catch(function () {});
     }
-    tabsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function renderEventDetailTab(tab, e) {
