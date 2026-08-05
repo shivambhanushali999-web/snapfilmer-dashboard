@@ -2045,7 +2045,11 @@
         '<div style="background:var(--surface);border-radius:18px;max-width:480px;width:100%;padding:24px 24px 20px;box-shadow:0 30px 70px -24px rgba(0,0,0,.4);">' +
           '<div class="card-title" style="margin:0 0 4px;">' + title + '</div>' +
           '<p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;">Drag to reposition, use the slider to zoom, then save.</p>' +
-          '<div id="cover-crop-viewport" style="position:relative;width:100%;aspect-ratio:4/3;overflow:hidden;border-radius:12px;background:#000;cursor:grab;touch-action:none;">' +
+          // 16:9 to match the guest app's actual .home-album-card aspect ratio exactly —
+          // it used to be 4:3 here while the card was a much shorter, wider fixed-height
+          // banner, so the guest app's object-fit:cover re-cropped whatever got framed
+          // here a second time, cutting off faces that looked fine in this preview.
+          '<div id="cover-crop-viewport" style="position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:12px;background:#000;cursor:grab;touch-action:none;">' +
             // crossorigin="anonymous" matters here specifically because photo bytes live
             // in Firebase Storage (a different origin than this dashboard page) — without
             // it, drawing this <img> onto the crop canvas below "taints" the canvas and
@@ -2165,14 +2169,15 @@
     const c = coverCrop;
     const dispScale = c.baseScale * c.scale;
     // Map the visible viewport rectangle back into the original, un-scaled image's
-    // own pixel coordinates, then draw exactly that rectangle onto a fixed 4:3 output
-    // canvas — this is what actually "bakes in" the crop/pan/zoom into a real image
-    // file, instead of only ever looking right inside this modal.
+    // own pixel coordinates, then draw exactly that rectangle onto a fixed 16:9 output
+    // canvas (matching the guest app's .home-album-card aspect ratio exactly) — this is
+    // what actually "bakes in" the crop/pan/zoom into a real image file, instead of
+    // only ever looking right inside this modal.
     const sx = -c.offsetX / dispScale;
     const sy = -c.offsetY / dispScale;
     const sw = c.viewportW / dispScale;
     const sh = c.viewportH / dispScale;
-    const outW = 800, outH = 600;
+    const outW = 960, outH = 540;
     const canvas = document.createElement('canvas');
     canvas.width = outW; canvas.height = outH;
     const ctx = canvas.getContext('2d');
