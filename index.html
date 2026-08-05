@@ -462,6 +462,14 @@
   // always has one album "open" — selecting one in the sidebar filters the grid and
   // becomes the upload target, instead of uploads needing a separate dropdown page).
   let selectedAlbumFilter = null;
+  // Tracks which event selectedAlbumFilter currently belongs to. renderEventDetail()
+  // re-runs not just on real navigation but also every time the events onSnapshot
+  // listener fires for THIS SAME event (e.g. right after an upload's own count/album
+  // sync write bounces back from Firestore) — without this guard it was resetting
+  // selectedAlbumFilter back to the first album every time, which looked like a photo
+  // you'd just uploaded into Cam 2 had "moved itself" to Cam 1 a moment later, when
+  // really the photo never moved — the view just silently snapped back to album #1.
+  let selectedAlbumFilterEventId = null;
   let dashboardEventPhotos = [];
   let dashboardPhotosUnsub = null;
   let gridSelectMode = false;
@@ -645,7 +653,16 @@
       boot.then(function () {
         renderShell();
         showPage(currentPage || 'overview');
-        backfillSeedEventsToCloud();
+        // backfillSeedEventsToCloud() used to run here on every single login/reload —
+        // it was meant as a ONE-TIME patch (see its own comment) for an old event that
+        // predated Firestore having its full data. But it unconditionally pushed
+        // whatever was in the local hardcoded EVENTS seed (name/date/cover/etc.) into
+        // Firestore with a merge write, every time the dashboard loaded — including the
+        // seed's placeholder cover photo. That silently overwrote any REAL cover the
+        // studio had since set via the crop tool, the instant the dashboard was
+        // reopened, which is exactly why a newly-set Event Cover kept reverting back to
+        // the old placeholder. The migration already did its job long ago — removed so
+        // it can't keep clobbering real data forever.
         startEventsSync();
         startPostsAdminSync();
         startTicketsSync();
@@ -1359,7 +1376,17 @@
     // "All Photos" default landing view. If this event has zero albums yet, leave the
     // filter unset; renderEventPhotosGrid() below shows a "create an album" prompt
     // instead of any photos in that case.
-    selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
+    // Only reset the filter when actually switching TO this event — renderEventDetail()
+    // also re-runs on every remote refresh of the SAME event (see
+    // selectedAlbumFilterEventId above), and re-defaulting to album #1 on every one of
+    // those made whichever album you had open (e.g. Cam 2) keep snapping back to Cam 1
+    // right after an upload, even though the photo itself was correctly saved in Cam 2.
+    const isValidExistingFilter = selectedAlbumFilter === 'HIGHLIGHTS' || selectedAlbumFilter === '' ||
+      (selectedAlbumFilter && e.albums.some(function (a) { return a.name === selectedAlbumFilter; }));
+    if (currentEventId !== selectedAlbumFilterEventId || !isValidExistingFilter) {
+      selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
+    }
+    selectedAlbumFilterEventId = currentEventId;
     gridSelectMode = false; gridSelectedPhotoIds = [];
     if (!Array.isArray(e.videos)) e.videos = [];
     renderAlbumSidebar(e);
