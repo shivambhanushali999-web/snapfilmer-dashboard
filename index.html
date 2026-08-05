@@ -233,6 +233,20 @@
   .pw-quick-color { width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent; flex-shrink: 0; }
   .pw-quick-color.active { border-color: var(--ink); }
 
+  /* Create Event wizard — matches Kamero's own "Create New Event" layout: a vertical
+     labelled rail (EVENT DETAILS / SETTINGS / HOSTS) down the left of each section
+     instead of plain stacked cards. */
+  .wiz-section { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; margin-bottom: 20px; }
+  .wiz-rail { width: 56px; flex-shrink: 0; background: var(--accent-soft); color: var(--accent-ink); display: flex; flex-direction: column; align-items: center; padding: 22px 0; gap: 16px; }
+  .wiz-rail .lbl { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; font-weight: 800; letter-spacing: 1.5px; }
+  .wiz-body { flex: 1; min-width: 0; padding: 22px 26px; }
+  .wiz-req { color: #E5484D; }
+  .wiz-help { display: inline-flex; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted); font-size: 9.5px; align-items: center; justify-content: center; cursor: help; flex-shrink: 0; }
+  .dl-opt-btn { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); font-size: 13px; font-weight: 700; color: var(--ink); cursor: pointer; }
+  .dl-opt-btn.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+  .dl-opt-btn svg { flex-shrink: 0; }
+  .host-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: start; margin-bottom: 12px; }
+
   /* Live phone preview — the real guest app embedded in an iframe (see
      renderProfileWizard). The guest app's CSS assumes a real phone's viewport width
      (via <meta viewport width=device-width>), so simply squeezing the iframe itself
@@ -289,6 +303,9 @@
     FOLDER: icon('<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>'),
     STAR: icon('<path d="M12 2l3.1 6.3 7 1-5 5 1.2 6.9L12 18l-6.3 3.2L7 14.3l-5-5 7-1z"/>'),
     USERS: icon('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 3-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16.5 5.5a3.5 3.5 0 010 6.9"/><path d="M21.5 20c0-2.9-1.9-5.3-4.5-6.2"/>'),
+    PERSON: icon('<circle cx="12" cy="7" r="4"/><path d="M4 21v-1a6 6 0 0112 0v1"/>'),
+    BAN: icon('<circle cx="12" cy="12" r="10"/><path d="M5.1 5.1l13.8 13.8"/>'),
+    CLIPBOARD: icon('<rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 15h6"/>'),
     DROPLET: icon('<path d="M12 2s7 7.5 7 12.5a7 7 0 01-14 0C5 9.5 12 2 12 2z"/>'),
     ARROW_UP: icon('<path d="M12 19V5M5 12l7-7 7 7"/>'),
     SERVER: icon('<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>'),
@@ -364,6 +381,10 @@
     renewalDate: '2026-09-01', billingCycle: 'Monthly',
     followCode: 'FA-BXYHLB', originalFiles: 9,
     logoUrl: '', coverUrl: '', subdomain: '', portfolioEventId: '',
+    // Discrete, one-off purchased packs — separate from creditsTotal (the shared
+    // subscription pool). Each is a standalone unit with its own 12-month validity;
+    // "Create Event from Purchased Pack" consumes exactly one of these per event.
+    eventPacks: [],
   };
 
   // The same 9-tier photo pack real Kamero sells both account-wide (Home page "My
@@ -1000,6 +1021,7 @@
     kamsync: 'Kam-Sync', share: 'Share & QR', commonqr: 'Common QR', posts: 'Posts', watermark: 'Watermark', tickets: 'Support Tickets', sell: 'Sell Photos', analytics: 'Analytics', subscription: 'Subscription', settings: 'Settings',
     wallet: 'Wallet & Commission Ledger', usagereport: 'Usage Report',
     sellerdash: 'Seller Dashboard', sellsettings: 'Sell Photos Settings', bizsettings: 'Business Settings', sellwatermark: 'Standard Watermark', sellwizard: 'Create Sell Photos Event',
+    createevent: 'Create Event',
   };
 
   function showPage(name, param) {
@@ -1015,6 +1037,7 @@
       kamsync: renderKamSync, share: renderShare, commonqr: renderCommonQR, posts: renderPostsPage, watermark: renderWatermarkPage, tickets: renderTicketsPage, sell: renderSell, analytics: renderAnalytics, subscription: renderSubscriptionPage, settings: renderSettings,
       wallet: renderWalletLedger, usagereport: renderUsageReport,
       sellerdash: renderSellerDashboard, sellsettings: renderSellSettings, bizsettings: renderBusinessSettings, sellwatermark: renderSellWatermarkEditor, sellwizard: renderSellWizard,
+      createevent: renderCreateEventWizard,
     };
     const renderer = renderers[name];
     if (renderer) renderer(el);
@@ -1091,9 +1114,34 @@
         '</div>' +
       '</div>' +
       '<div class="section-row" style="margin-top:26px;"><h3>My Event Packs</h3></div>' +
+      renderMyEventPacksSummary() +
+      '<div class="section-row" style="margin-top:20px;"><h3>Purchase Event Pack</h3></div>' +
       renderEventPackTable('home');
 
     fillIcons();
+  }
+
+  // Purchased-but-unused packs each have their own 12-month validity and photo
+  // capacity, independent of the studio's shared subscription credit pool — this is
+  // the standalone inventory "Create Event from Purchased Pack" consumes one of.
+  function studioAvailableEventPacks() {
+    return (STUDIO.eventPacks || []).filter(function (p) { return !p.used; });
+  }
+
+  function renderMyEventPacksSummary() {
+    const packs = studioAvailableEventPacks();
+    if (!packs.length) {
+      return '<div class="card" style="text-align:center;padding:28px 20px;">' +
+        '<div style="width:44px;height:44px;border-radius:12px;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">' + ICONS.FOLDER + '</div>' +
+        '<div style="font-weight:800;font-size:15px;margin-bottom:4px;">No Event Packs Available</div>' +
+        '<div class="card-sub">Purchase event pack to create events</div>' +
+      '</div>';
+    }
+    return '<div class="table-card"><table><thead><tr><th>Photos</th><th>Validity</th><th>Purchased</th><th></th></tr></thead><tbody>' +
+      packs.map(function (p) {
+        return '<tr><td>' + p.photos.toLocaleString() + '</td><td>12 Months</td><td>' + formatDate(p.purchasedAt) + '</td><td><span class="pill green">Available</span></td></tr>';
+      }).join('') +
+    '</tbody></table></div>';
   }
 
   function daysUntil(dateStr) {
@@ -1163,9 +1211,24 @@
       }
       alert(totalPhotos.toLocaleString() + ' photos added to this event\'s limit (mock purchase — no real payment charged).');
     } else {
-      STUDIO.creditsTotal += totalPhotos;
-      if (db) db.collection('studio').doc('profile').set({ creditsTotal: STUDIO.creditsTotal }, { merge: true }).catch(function () {});
-      alert(totalPhotos.toLocaleString() + ' photos added to your plan (mock purchase — no real payment charged).');
+      // Home page purchase — creates discrete, standalone "My Event Packs" (each with
+      // its own 12-month validity from today), NOT a bump to the shared subscription
+      // credit pool. These are what "Create Event from Purchased Pack" consumes one
+      // of, separately from anything tied to the studio's plan/renewal date.
+      const today = new Date().toISOString().slice(0, 10);
+      let packCount = 0;
+      Object.keys(cart).forEach(function (i) {
+        const tier = EVENT_PACKS[i];
+        for (let n = 0; n < cart[i]; n++) {
+          STUDIO.eventPacks.push({
+            id: 'pack_' + Date.now() + '_' + i + '_' + n + '_' + Math.random().toString(36).slice(2, 6),
+            photos: tier.photos, cost: tier.cost, purchasedAt: today, used: false, usedByEventId: null,
+          });
+          packCount++;
+        }
+      });
+      if (db) db.collection('studio').doc('profile').set({ eventPacks: STUDIO.eventPacks }, { merge: true }).catch(function () {});
+      alert(totalPhotos.toLocaleString() + ' photos across ' + packCount + ' pack(s) added to My Event Packs (mock purchase — no real payment charged).');
     }
     packCart[idPrefix] = {};
     const panel = document.getElementById('ed-action-panel');
@@ -1209,7 +1272,7 @@
           '<input class="input" id="events-search-input" placeholder="Search by name or event id" value="' + eventsSearch + '">' +
           '<button class="btn-solid btn-sm" onclick="setEventsSearch()">Search</button>' +
         '</div>' +
-        '<button class="btn-solid" onclick="openCreateEvent()">' + ICONS.PLUS + ' Create Event</button>' +
+        '<button class="btn-solid" onclick="openCreateEventWizard()">' + ICONS.PLUS + ' Create Event</button>' +
       '</div>' +
       renderExpiryBanners(EVENTS.filter(function (e) { return e.status === 'disabled'; }).length || 3) +
       '<div class="tabs-row" id="events-filter-tabs">' +
@@ -1313,17 +1376,287 @@
     return dt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' });
   }
 
-  function openCreateEvent() {
+  // ================= Create Event wizard =================
+  // Matches Kamero's own two-option "Create New Event" flow: create from the studio's
+  // active Subscription (rides on the plan's own remaining validity + upload
+  // allowance) vs. from a separately Purchased Pack (its own standalone one-off
+  // allowance — a discrete "My Event Packs" unit bought on the Home page, each with
+  // its own 12-month validity, consumed one-per-event).
+  let createEventWizardStep = 'choose';
+  let createEventSelectedPackId = null;
+  function freshCreateEventWizardData() {
+    return {
+      name: '', category: '', date: new Date().toISOString().slice(0, 10),
+      guestUpload: false, enquiry: true, downloadPermission: 'all',
+      hosts: [{ name: '', email: '', mobile: '' }],
+    };
+  }
+  let CREATE_EVENT_WIZARD = freshCreateEventWizardData();
+
+  function openCreateEventWizard() {
+    createEventWizardStep = 'choose';
+    createEventSelectedPackId = null;
+    CREATE_EVENT_WIZARD = freshCreateEventWizardData();
+    showPage('createevent');
+  }
+
+  // Clicking "Create Event from Purchased Pack" — routes to an honest "you have
+  // nothing to use yet" screen when there's genuinely no unused pack, instead of
+  // pretending the feature works and then failing silently.
+  function openCreateEventFromPackFlow() {
+    createEventWizardStep = studioAvailableEventPacks().length ? 'pack-select' : 'no-packs';
+    showPage('createevent');
+  }
+
+  function selectCreateEventPack(packId) {
+    createEventSelectedPackId = packId;
+    createEventWizardStep = 'pack-form';
+    showPage('createevent');
+  }
+
+  function addMonthsToDate(dateStr, months) {
+    const dt = new Date(dateStr + 'T00:00:00');
+    dt.setMonth(dt.getMonth() + months);
+    return dt.toISOString().slice(0, 10);
+  }
+
+  function renderCreateEventWizard(el) {
+    if (createEventWizardStep === 'choose') {
+      el.innerHTML =
+        '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="showPage(\'events\')">' + ICONS.BACK + ' Back</button>' +
+        '<div class="card">' +
+          '<div class="card-title">Create New Event</div>' +
+          '<div class="card-sub" style="margin-bottom:16px;">Fill in the details below to set up your event.</div>' +
+          '<div class="grid-2">' +
+            '<div class="card" style="text-align:center;cursor:pointer;" onclick="createEventWizardStep=\'subscription\';showPage(\'createevent\')">' +
+              '<div style="width:52px;height:52px;border-radius:14px;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">' + ICONS.CALENDAR + '</div>' +
+              '<div style="font-weight:800;font-size:14px;margin-bottom:6px;">Create Event from Subscription</div>' +
+              '<div class="card-sub">This will create an event from your existing subscription pack</div>' +
+            '</div>' +
+            '<div class="card" style="text-align:center;cursor:pointer;" onclick="openCreateEventFromPackFlow()">' +
+              '<div style="width:52px;height:52px;border-radius:14px;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">' + ICONS.WALLET + '</div>' +
+              '<div style="font-weight:800;font-size:14px;margin-bottom:6px;">Create Event from Purchased Pack</div>' +
+              '<div class="card-sub">You can use your already purchased packs to create an event</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      fillIcons();
+      return;
+    }
+
+    if (createEventWizardStep === 'no-packs') {
+      el.innerHTML =
+        '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="createEventWizardStep=\'choose\';showPage(\'createevent\')">' + ICONS.BACK + ' Back</button>' +
+        '<div class="card">' +
+          '<div class="card-title">Create New Event</div>' +
+          '<div class="card-sub" style="margin-bottom:16px;">Fill in the details below to set up your event.</div>' +
+          '<div style="text-align:center;padding:50px 20px;">' +
+            '<div style="width:56px;height:56px;border-radius:16px;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' + ICONS.FOLDER + '</div>' +
+            '<div style="font-weight:800;font-size:16px;margin-bottom:6px;">No Event Packs Available</div>' +
+            '<div class="card-sub" style="margin-bottom:18px;">You need to purchase a pack first to create a new event</div>' +
+            '<button class="btn-solid" onclick="showPage(\'overview\')">Go to Dashboard to Purchase Pack</button>' +
+          '</div>' +
+        '</div>';
+      fillIcons();
+      return;
+    }
+
+    if (createEventWizardStep === 'pack-select') {
+      const packs = studioAvailableEventPacks();
+      el.innerHTML =
+        '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="createEventWizardStep=\'choose\';showPage(\'createevent\')">' + ICONS.BACK + ' Back</button>' +
+        '<div class="card">' +
+          '<div class="card-title">Choose a Pack</div>' +
+          '<div class="card-sub" style="margin-bottom:16px;">Pick which purchased pack this new event will use — it can\'t be split across events.</div>' +
+          '<div class="table-card"><table><thead><tr><th>Photos</th><th>Validity</th><th>Purchased</th><th></th></tr></thead><tbody>' +
+            packs.map(function (p) {
+              return '<tr><td>' + p.photos.toLocaleString() + '</td><td>12 Months</td><td>' + formatDate(p.purchasedAt) + '</td>' +
+                '<td><button class="btn-solid btn-sm" onclick="selectCreateEventPack(\'' + p.id + '\')">Use this Pack</button></td></tr>';
+            }).join('') +
+          '</tbody></table></div>' +
+        '</div>';
+      fillIcons();
+      return;
+    }
+
+    // Shared by both remaining steps ('subscription' and 'pack-form') — same Event
+    // Details/Settings/Hosts form either way, just a different funding source and
+    // therefore a different footer hint + submit handler.
+    const isPack = createEventWizardStep === 'pack-form';
+    const pack = isPack ? (STUDIO.eventPacks || []).find(function (p) { return p.id === createEventSelectedPackId; }) : null;
+    if (isPack && !pack) {
+      // Pack vanished (already used / bad state) — bounce back rather than let the
+      // form submit against nothing.
+      createEventWizardStep = 'pack-select';
+      renderCreateEventWizard(el);
+      return;
+    }
+
+    const d = CREATE_EVENT_WIZARD;
+    const creditsLeft = Math.max(0, STUDIO.creditsTotal - STUDIO.creditsUsed);
+    const backStep = isPack ? 'pack-select' : 'choose';
+    const hintHtml = isPack
+      ? '<div class="hint" style="margin-bottom:14px;">This event will use your purchased pack of <b>' + pack.photos.toLocaleString() + ' photos</b> — its gallery stays valid for 12 months from your purchase on ' + formatDate(pack.purchasedAt) + ' (until ' + formatDate(addMonthsToDate(pack.purchasedAt, 12)) + ').</div>'
+      : '<div class="hint" style="margin-bottom:14px;">This event will use your current <b>' + STUDIO.plan + '</b> subscription — its gallery stays valid until your plan renews on ' + formatDate(STUDIO.renewalDate) + ', and it can hold up to ' + creditsLeft.toLocaleString() + ' photos (your plan\'s remaining upload allowance).</div>';
+    const submitFn = isPack ? 'submitCreateEventFromPack()' : 'submitCreateEventFromSubscription()';
+
+    el.innerHTML =
+      '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="createEventWizardStep=\'' + backStep + '\';showPage(\'createevent\')">' + ICONS.BACK + ' Back</button>' +
+      '<h2 style="margin:0 0 4px;">Create New Event</h2>' +
+      '<div class="card-sub" style="margin-bottom:18px;">Fill in the details below to set up your event.</div>' +
+
+      '<div class="wiz-section">' +
+        '<div class="wiz-rail">' + ICONS.CLIPBOARD + '<span class="lbl">EVENT DETAILS</span></div>' +
+        '<div class="wiz-body">' +
+          '<div class="field" id="ce-name-field">' +
+            '<label><span class="wiz-req">*</span> Event Name <span style="font-weight:400;color:var(--muted);">(' + d.name.length + '/35 characters)</span></label>' +
+            '<input class="input" id="ce-name" maxlength="35" placeholder="The name guests will see for your event" value="' + d.name + '">' +
+          '</div>' +
+          '<div class="grid-2">' +
+            '<div class="field"><label><span class="wiz-req">*</span> Event Category</label>' +
+              '<select class="input" id="ce-category">' +
+                '<option value="">Select event category</option>' +
+                ['Wedding', 'Pre-Wedding', 'Birthday', 'Corporate', 'Maternity', 'Other'].map(function (c) {
+                  return '<option' + (d.category === c ? ' selected' : '') + '>' + c + '</option>';
+                }).join('') +
+              '</select>' +
+            '</div>' +
+            '<div class="field"><label><span class="wiz-req">*</span> Event Date</label><input class="input" type="date" id="ce-date" value="' + d.date + '"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="wiz-section">' +
+        '<div class="wiz-rail">' + ICONS.SETTINGS + '<span class="lbl">SETTINGS</span></div>' +
+        '<div class="wiz-body">' +
+          '<div class="grid-2" style="margin-bottom:18px;">' +
+            '<div><label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#514D53;margin-bottom:6px;">Enable Guest Upload <span class="wiz-help" title="Lets guests upload their own photos into this event\'s gallery.">?</span></label>' +
+              '<label class="switch"><input type="checkbox" id="ce-guest-upload"' + (d.guestUpload ? ' checked' : '') + '><span class="slider"></span></label>' +
+            '</div>' +
+            '<div><label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#514D53;margin-bottom:6px;">Allow Enquiry <span class="wiz-help" title="Lets guests send you an enquiry directly from the gallery.">?</span></label>' +
+              '<label class="switch"><input type="checkbox" id="ce-enquiry"' + (d.enquiry ? ' checked' : '') + '><span class="slider"></span></label>' +
+            '</div>' +
+          '</div>' +
+          '<label style="display:block;font-size:12px;font-weight:700;color:#514D53;margin-bottom:8px;"><span class="wiz-req">*</span> Download Options</label>' +
+          '<div id="ce-dl-opts" style="display:flex;gap:12px;flex-wrap:wrap;">' +
+            createEventDownloadOptionBtn('all', 'Allow all', ICONS.DOWNLOAD, d.downloadPermission) +
+            createEventDownloadOptionBtn('my-photos', 'Personal photos only', ICONS.PERSON, d.downloadPermission) +
+            createEventDownloadOptionBtn('none', 'Disable downloads', ICONS.BAN, d.downloadPermission) +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="wiz-section">' +
+        '<div class="wiz-rail">' + ICONS.USERS + '<span class="lbl">HOSTS</span></div>' +
+        '<div class="wiz-body">' +
+          '<div class="card-sub" style="margin-bottom:14px;">Add the event owner(s) — organizer, bride, groom, or client. We\'ll notify them about the event, photo delivery, and renewals.</div>' +
+          '<div id="ce-hosts"></div>' +
+          '<button type="button" class="btn-outline btn-sm" onclick="addCreateEventHost()">' + ICONS.PLUS + ' Add Additional Host</button>' +
+        '</div>' +
+      '</div>' +
+
+      hintHtml +
+      '<button class="btn-solid" onclick="' + submitFn + '">Create Event</button>';
+
+    renderCreateEventHosts();
+    wireCreateEventFields();
+    fillIcons();
+  }
+
+  function createEventDownloadOptionBtn(value, label, iconSvg, current) {
+    const active = current === value;
+    return '<label class="dl-opt-btn' + (active ? ' active' : '') + '" data-value="' + value + '">' +
+      '<input type="radio" name="ce-dl-perm" value="' + value + '" style="display:none;"' + (active ? ' checked' : '') + '>' +
+      iconSvg + label +
+    '</label>';
+  }
+
+  function wireCreateEventFields() {
+    const d = CREATE_EVENT_WIZARD;
+    const nameInput = document.getElementById('ce-name');
+    if (nameInput) nameInput.addEventListener('input', function () {
+      d.name = nameInput.value;
+      const field = document.getElementById('ce-name-field');
+      const label = field ? field.querySelector('label') : null;
+      if (label) label.innerHTML = '<span class="wiz-req">*</span> Event Name <span style="font-weight:400;color:var(--muted);">(' + d.name.length + '/35 characters)</span>';
+    });
+    const categorySel = document.getElementById('ce-category');
+    if (categorySel) categorySel.addEventListener('change', function () { d.category = categorySel.value; });
+    const dateInput = document.getElementById('ce-date');
+    if (dateInput) dateInput.addEventListener('input', function () { d.date = dateInput.value; });
+    const guestUploadToggle = document.getElementById('ce-guest-upload');
+    if (guestUploadToggle) guestUploadToggle.addEventListener('change', function () { d.guestUpload = guestUploadToggle.checked; });
+    const enquiryToggle = document.getElementById('ce-enquiry');
+    if (enquiryToggle) enquiryToggle.addEventListener('change', function () { d.enquiry = enquiryToggle.checked; });
+    document.querySelectorAll('#ce-dl-opts .dl-opt-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        d.downloadPermission = btn.dataset.value;
+        document.querySelectorAll('#ce-dl-opts .dl-opt-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.value === d.downloadPermission); });
+        const radio = btn.querySelector('input'); if (radio) radio.checked = true;
+      });
+    });
+  }
+
+  function renderCreateEventHosts() {
+    const wrap = document.getElementById('ce-hosts');
+    if (!wrap) return;
+    wrap.innerHTML = CREATE_EVENT_WIZARD.hosts.map(function (h, i) {
+      return '<div class="host-row">' +
+        '<div class="field" style="margin-bottom:0;"><label><span class="wiz-req">*</span> Host Name</label><input class="input" placeholder="Enter the main organizer\'s name" data-host-name="' + i + '" value="' + h.name + '"></div>' +
+        '<div class="field" style="margin-bottom:0;"><label><span class="wiz-req">*</span> Host Email</label><input class="input" placeholder="Host\'s email for notifications and updates" data-host-email="' + i + '" value="' + h.email + '"></div>' +
+        '<div class="field" style="margin-bottom:0;"><label><span class="wiz-req">*</span> Host Mobile Number</label><input class="input" placeholder="Host\'s 10-digit mobile number" data-host-mobile="' + i + '" value="' + h.mobile + '"></div>' +
+        (i > 0 ? '<button type="button" class="icon-mini" style="margin-top:26px;" onclick="removeCreateEventHost(' + i + ')" title="Remove host">' + ICONS.TRASH + '</button>' : '<div></div>') +
+      '</div>';
+    }).join('');
+    fillIcons();
+    wrap.querySelectorAll('[data-host-name]').forEach(function (inp) {
+      inp.addEventListener('input', function () { CREATE_EVENT_WIZARD.hosts[Number(inp.dataset.hostName)].name = inp.value; });
+    });
+    wrap.querySelectorAll('[data-host-email]').forEach(function (inp) {
+      inp.addEventListener('input', function () { CREATE_EVENT_WIZARD.hosts[Number(inp.dataset.hostEmail)].email = inp.value; });
+    });
+    wrap.querySelectorAll('[data-host-mobile]').forEach(function (inp) {
+      inp.addEventListener('input', function () { CREATE_EVENT_WIZARD.hosts[Number(inp.dataset.hostMobile)].mobile = inp.value; });
+    });
+  }
+
+  function addCreateEventHost() {
+    CREATE_EVENT_WIZARD.hosts.push({ name: '', email: '', mobile: '' });
+    renderCreateEventHosts();
+  }
+
+  function removeCreateEventHost(i) {
+    CREATE_EVENT_WIZARD.hosts.splice(i, 1);
+    renderCreateEventHosts();
+  }
+
+  function submitCreateEventFromSubscription() {
+    const d = CREATE_EVENT_WIZARD;
+    if (!d.name.trim() || !d.category || !d.date || !d.downloadPermission) {
+      alert('Please fill in Event Name, Event Category, Event Date and Download Options.');
+      return;
+    }
+    const validHosts = d.hosts.filter(function (h) { return h.name.trim() && h.email.trim() && h.mobile.trim(); });
+    if (!validHosts.length) {
+      alert('Please add at least one host with name, email and mobile number.');
+      return;
+    }
+
     const id = 'evt_new_' + Date.now();
+    // "From Subscription" (as opposed to a Purchased Pack) means this event rides on
+    // the studio's existing plan rather than a separately bought add-on: its gallery
+    // validity is whatever's LEFT on the current billing cycle — not a fresh full
+    // period, so a plan 6 months into a 1-year cycle only gives a new event the 6
+    // months actually remaining — and its starting photo capacity comes out of the
+    // plan's currently unused upload-credit pool, not a flat made-up number.
+    const creditsLeft = Math.max(0, STUDIO.creditsTotal - STUDIO.creditsUsed);
     const newEvent = {
-      // Uses the studio's own Cover Photo (Profile → Photos) as the starting cover for
-      // a brand-new event, if one's been uploaded — a random picsum placeholder only
-      // when there's genuinely nothing better to show yet.
-      id: id, name: 'Untitled Event', date: new Date().toISOString().slice(0, 10), cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
-      photos: 0, photoLimit: 500, guests: 0, views: 0, status: 'active', validUpto: STUDIO.renewalDate,
-      albums: [],
-      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: false, disabled: false },
-      downloads: { permission: 'all', anonymous: true, originalQuality: false },
+      id: id, name: d.name.trim(), date: d.date, category: d.category,
+      cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
+      photos: 0, photoLimit: creditsLeft, guests: 0, views: 0, status: 'active', validUpto: STUDIO.renewalDate,
+      albums: [], hosts: validHosts,
+      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: d.guestUpload, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: d.enquiry, disabled: false },
+      downloads: { permission: d.downloadPermission, anonymous: true, originalQuality: false },
       watermark: freshEventWatermark(),
       videos: [], highlightEnabled: false,
     };
@@ -1335,6 +1668,53 @@
     // Prime the AWS Rekognition Collection now so the first photo upload doesn't pay
     // the extra "collection doesn't exist yet" round-trip.
     createEventFaceCollection(id);
+    showPage('event-detail', id);
+  }
+
+  function submitCreateEventFromPack() {
+    const pack = (STUDIO.eventPacks || []).find(function (p) { return p.id === createEventSelectedPackId; });
+    if (!pack || pack.used) {
+      alert('That pack is no longer available — please choose another.');
+      createEventWizardStep = 'pack-select';
+      showPage('createevent');
+      return;
+    }
+    const d = CREATE_EVENT_WIZARD;
+    if (!d.name.trim() || !d.category || !d.date || !d.downloadPermission) {
+      alert('Please fill in Event Name, Event Category, Event Date and Download Options.');
+      return;
+    }
+    const validHosts = d.hosts.filter(function (h) { return h.name.trim() && h.email.trim() && h.mobile.trim(); });
+    if (!validHosts.length) {
+      alert('Please add at least one host with name, email and mobile number.');
+      return;
+    }
+
+    const id = 'evt_new_' + Date.now();
+    // "From Purchased Pack": this event's validity and photo capacity come from the
+    // ONE specific pack the studio picked — 12 months from when THAT pack was bought,
+    // completely independent of the studio's subscription cycle — and that pack gets
+    // marked used immediately so it can't also be handed to a second event.
+    const newEvent = {
+      id: id, name: d.name.trim(), date: d.date, category: d.category,
+      cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
+      photos: 0, photoLimit: pack.photos, guests: 0, views: 0, status: 'active',
+      validUpto: addMonthsToDate(pack.purchasedAt, 12),
+      albums: [], hosts: validHosts, eventPackId: pack.id,
+      privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: d.guestUpload, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: d.enquiry, disabled: false },
+      downloads: { permission: d.downloadPermission, anonymous: true, originalQuality: false },
+      watermark: freshEventWatermark(),
+      videos: [], highlightEnabled: false,
+    };
+    EVENTS.unshift(newEvent);
+    if (db) db.collection('events').doc(id).set(newEvent).catch(function () {});
+    createEventFaceCollection(id);
+
+    pack.used = true;
+    pack.usedByEventId = id;
+    if (db) db.collection('studio').doc('profile').set({ eventPacks: STUDIO.eventPacks }, { merge: true }).catch(function () {});
+    renderSidebar();
+
     showPage('event-detail', id);
   }
 
@@ -1350,7 +1730,7 @@
       '<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">' +
         '<img src="' + e.cover + '" style="width:64px;height:64px;border-radius:16px;object-fit:cover;">' +
         '<div style="flex:1;"><div style="font-size:20px;font-weight:800;">' + e.name + '</div>' +
-        '<div style="color:var(--muted);font-size:12.5px;margin-top:2px;">' + formatDate(e.date) + ' &middot; ' + e.photos + ' photos &middot; ID: ' + e.id + '</div></div>' +
+        '<div style="color:var(--muted);font-size:12.5px;margin-top:2px;">' + formatDate(e.date) + (e.category ? ' &middot; ' + e.category : '') + ' &middot; ' + e.photos + ' photos &middot; ID: ' + e.id + '</div></div>' +
         pillFor(e.status) +
       '</div>' +
       '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;">' +
@@ -1581,7 +1961,22 @@
             toggleRowHtml('Disable Event', "Guests won't be able to access this gallery.", e.privacy.disabled, '', 'privacy.disabled') +
             '<button class="btn-danger" style="margin-top:14px;width:100%;justify-content:center;" onclick="deleteEvent()">' + ICONS.TRASH + ' Delete Event</button>' +
           '</div>' +
-        '</div>';
+        '</div>' +
+        // Set once at creation time by the Create Event wizard (Category + Hosts) —
+        // shown read-only here rather than silently dropped, since they were real
+        // fields the studio actually filled in when setting up this event.
+        (e.category || (e.hosts && e.hosts.length)
+          ? '<div class="card" style="margin-top:16px;">' +
+              '<div class="card-title">Event Info</div>' +
+              (e.category ? '<div class="card-sub" style="margin-bottom:10px;">Category: <b style="color:var(--ink);">' + e.category + '</b></div>' : '') +
+              (e.hosts && e.hosts.length
+                ? '<div class="card-sub" style="margin-bottom:6px;">Hosts</div>' +
+                  e.hosts.map(function (h) {
+                    return '<div style="font-size:12.5px;padding:8px 0;border-bottom:1px solid var(--border);"><b>' + h.name + '</b> &middot; ' + h.email + ' &middot; ' + h.mobile + '</div>';
+                  }).join('')
+                : '') +
+            '</div>'
+          : '');
     } else if (tab === 'privacy') {
       el.innerHTML =
         '<div class="card">' +
