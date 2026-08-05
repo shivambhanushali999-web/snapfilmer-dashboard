@@ -1319,6 +1319,14 @@
               '<label class="btn-solid" style="width:100%;justify-content:center;margin-top:12px;cursor:pointer;">' + ICONS.PLUS + ' Standard Upload' +
                 '<input type="file" accept="image/*" multiple style="display:none" onchange="handleEventPhotoUpload(event, \'standard\')">' +
               '</label>' +
+              // Same flag as Settings → Watermark → "Enable Standard Watermark" — this is
+              // just a quicker on/off right where uploading actually happens, not a second
+              // separate setting. On means the studio's logo/text shows on every photo
+              // guests see AND stays baked into downloaded files; off means neither.
+              '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
+                '<span style="font-size:12.5px;font-weight:700;">Add Watermark?</span>' +
+                '<label class="switch"><input type="checkbox" id="ep-upload-wm-standard"' + (e.watermark.standard.enabled ? ' checked' : '') + ' onchange="toggleUploadWatermark(\'standard\', this.checked)"><span class="slider"></span></label>' +
+              '</div>' +
             '</div>' +
             '<div class="card" style="border:2px dashed var(--border);">' +
               '<div style="display:flex;align-items:center;gap:10px;">' +
@@ -1328,6 +1336,10 @@
               '<label class="btn-outline" style="width:100%;justify-content:center;margin-top:12px;cursor:pointer;">' + ICONS.PLUS + ' Original Upload' +
                 '<input type="file" accept="image/*" multiple style="display:none" onchange="handleEventPhotoUpload(event, \'original\')">' +
               '</label>' +
+              '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
+                '<span style="font-size:12.5px;font-weight:700;">Add Watermark?</span>' +
+                '<label class="switch"><input type="checkbox" id="ep-upload-wm-original"' + (e.watermark.original.enabled ? ' checked' : '') + ' onchange="toggleUploadWatermark(\'original\', this.checked)"><span class="slider"></span></label>' +
+              '</div>' +
             '</div>' +
           '</div>' +
           '<div id="ep-upload-queue" style="margin-bottom:14px;"></div>' +
@@ -2506,6 +2518,17 @@
     });
   }
 
+  // Quick on/off right where uploading happens, instead of only being reachable a few
+  // clicks away in Settings → Watermark. Writes to the exact same
+  // e.watermark.<tier>.enabled flag that tab reads/shows — one real setting, two
+  // places to flip it, not a second parallel one that could drift out of sync.
+  function toggleUploadWatermark(tier, checked) {
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (!e) return;
+    e.watermark[tier].enabled = checked;
+    syncEventPrivacyToCloud(e.id, { watermark: e.watermark });
+  }
+
   // Upload target here is whatever album is currently selected in the sidebar (or
   // "Unsorted" if none) — no separate event/album dropdowns needed, since real Kamero
   // uploads directly into the folder you already have open.
@@ -3659,7 +3682,11 @@
         // background below, and a JPEG would force an opaque white/black box behind it.
         const dataUrl = canvas.toDataURL('image/png');
         STUDIO.logoUrl = dataUrl;
-        if (db) db.collection('studio').doc('profile').set({ logoUrl: dataUrl }, { merge: true }).catch(function () {});
+        // Used to silently swallow a failed save here — the preview updated locally so
+        // it LOOKED uploaded, but if the Firestore write itself failed, nothing was
+        // really persisted and the logo would just be gone again on the next reload,
+        // with zero indication anything had gone wrong.
+        if (db) db.collection('studio').doc('profile').set({ logoUrl: dataUrl }, { merge: true }).catch(showSyncFailureToast);
         if (statusEl) statusEl.style.display = 'none';
         const e = EVENTS.find(function (x) { return x.id === currentEventId; }) || EVENTS[0];
         if (e) renderShareTab(e);
@@ -3675,7 +3702,7 @@
   function removeStudioLogo() {
     if (!confirm('Remove the custom logo from QR codes?')) return;
     STUDIO.logoUrl = '';
-    if (db) db.collection('studio').doc('profile').set({ logoUrl: '' }, { merge: true }).catch(function () {});
+    if (db) db.collection('studio').doc('profile').set({ logoUrl: '' }, { merge: true }).catch(showSyncFailureToast);
     const e = EVENTS.find(function (x) { return x.id === currentEventId; }) || EVENTS[0];
     if (e) renderShareTab(e);
   }
@@ -4249,8 +4276,8 @@
 
   // ================= Watermark (account-level defaults) =================
   function saveWatermarkDefaults() {
-    if (!db) return;
-    db.collection('studio').doc('profile').set({ watermarkDefaults: WATERMARK_DEFAULTS }, { merge: true }).catch(function () {});
+    if (!db) { showSyncFailureToast(null); return; }
+    db.collection('studio').doc('profile').set({ watermarkDefaults: WATERMARK_DEFAULTS }, { merge: true }).catch(showSyncFailureToast);
   }
 
   function watermarkCard(key, title, desc) {
