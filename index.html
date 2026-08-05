@@ -2080,7 +2080,14 @@
       const dispW = coverCrop.naturalW * baseScale;
       const dispH = coverCrop.naturalH * baseScale;
       coverCrop.offsetX = (coverCrop.viewportW - dispW) / 2;
-      coverCrop.offsetY = (coverCrop.viewportH - dispH) / 2;
+      // Dead-centering vertically used to cut heads off by default on portrait-oriented
+      // photos — fitting a tall photo into this wide 16:9 frame usually means a lot of
+      // vertical overflow gets hidden, and most of a photo's important content (faces)
+      // sits in the upper portion, not the middle. Biasing the default toward the top
+      // (instead of centered) means the initial framing already looks reasonable before
+      // the studio even touches the drag/zoom controls, rather than needing a fix every
+      // single time.
+      coverCrop.offsetY = Math.min(0, (coverCrop.viewportH - dispH) * 0.15);
       renderCoverCropImg();
     };
     if (img.complete && img.naturalWidth) img.onload();
