@@ -233,22 +233,17 @@
   .pw-quick-color { width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent; flex-shrink: 0; }
   .pw-quick-color.active { border-color: var(--ink); }
 
-  /* Live phone preview — a real mirror of the guest app's own Home/gate studio card,
-     rebuilt with the same markup+classes as snapfilmer-original.html's studio card, so
-     it can never silently drift from what guests actually see. */
-  .pw-phone-frame { width: 270px; border-radius: 34px; border: 10px solid #1a1a1a; background: #1a1a1a; box-shadow: 0 24px 60px -20px rgba(0,0,0,.4); flex-shrink: 0; }
-  .pw-phone-screen { background: #F5F1E8; border-radius: 24px; overflow: hidden; min-height: 500px; position: relative; font-family: -apple-system, sans-serif; }
-  .pw-phone-cover { position: relative; width: 100%; aspect-ratio: 16/10; background: #ddd; overflow: hidden; }
-  .pw-phone-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .pw-phone-cover .label { position: absolute; top: 10px; left: 12px; color: #fff; font-weight: 800; font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
-  .pw-phone-cover .badge { position: absolute; bottom: 10px; right: 12px; background: rgba(0,0,0,.5); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .5px; padding: 3px 8px; border-radius: 6px; }
-  .pw-phone-studio { padding: 12px 14px; background: #fff; }
-  .pw-phone-studio .row { display: flex; align-items: center; gap: 8px; }
-  .pw-phone-studio .avatar { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; background: #eee; flex-shrink: 0; }
-  .pw-phone-studio .name { font-weight: 800; font-size: 13.5px; }
-  .pw-phone-studio .bio { font-size: 11px; color: #6b6b6b; margin-top: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .pw-phone-studio .socials { display: flex; gap: 8px; margin-top: 10px; }
-  .pw-phone-studio .socials span { width: 22px; height: 22px; border-radius: 50%; background: #f0eee8; display: flex; align-items: center; justify-content: center; color: #555; }
+  /* Live phone preview — the real guest app embedded in an iframe (see
+     renderProfileWizard). The guest app's CSS assumes a real phone's viewport width
+     (via <meta viewport width=device-width>), so simply squeezing the iframe itself
+     down to the mockup's ~250px content box makes "device-width" resolve to 250px,
+     way below any real phone and far outside anything the guest app's layout was
+     built to handle — that's what caused the overlapping/cramped screenshot. Instead
+     the iframe renders at a real phone size (400x800) and is scaled down with a CSS
+     transform to fit the mockup frame, the standard device-preview trick — the guest
+     app always thinks it has a normal phone's width, it just displays smaller here. */
+  .pw-phone-frame { width: 270px; height: 520px; border-radius: 34px; border: 10px solid #1a1a1a; background: #1a1a1a; box-shadow: 0 24px 60px -20px rgba(0,0,0,.4); flex-shrink: 0; overflow: hidden; position: relative; }
+  .pw-phone-screen { width: 400px; height: 800px; transform: scale(0.625); transform-origin: top left; border: none; display: block; background: #F5F1E8; }
 </style>
 </head>
 <body>
@@ -5534,9 +5529,9 @@
           '</div>' +
         '</div>' +
         '<div style="flex-shrink:0;">' +
-          '<div class="pw-phone-frame"><iframe id="pw-phone-iframe" src="' + GUEST_APP_URL + '" class="pw-phone-screen" style="border:none;width:100%;height:100%;display:block;" title="Live guest app preview"></iframe></div>' +
+          '<div class="pw-phone-frame"><iframe id="pw-phone-iframe" src="' + GUEST_APP_URL + '" class="pw-phone-screen" title="Live guest app preview"></iframe></div>' +
           '<button type="button" class="btn-outline btn-sm" style="width:100%;justify-content:center;margin-top:10px;" onclick="document.getElementById(\'pw-phone-iframe\').src=document.getElementById(\'pw-phone-iframe\').src;">' + ICONS.REFRESH + ' Refresh Preview</button>' +
-          '<div class="hint" style="text-align:center;margin-top:6px;">This is the real guest app — it updates here once you hit Save.</div>' +
+          '<div class="hint" style="text-align:center;margin-top:6px;">This is the real guest app — edits show here instantly as a preview; hit Save to actually publish them.</div>' +
         '</div>' +
       '</div>' +
       '<div class="card" style="margin-top:20px;">' +
@@ -5556,6 +5551,12 @@
       '</div>';
     fillIcons();
     wireProfileWizardStep(profileWizardStep);
+    // A fresh iframe always starts by loading whatever's actually saved in Firestore —
+    // push the current in-memory (possibly unsaved) draft the moment it finishes
+    // loading, so switching wizard steps doesn't make the preview flash back to stale
+    // saved data before catching up with edits made earlier in this same visit.
+    const pwIframe = document.getElementById('pw-phone-iframe');
+    if (pwIframe) pwIframe.addEventListener('load', postProfileDraftToPreview);
 
     const prefUploads = document.getElementById('pref-new-uploads');
     const prefOrders = document.getElementById('pref-new-orders');
@@ -5671,11 +5672,11 @@
       counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
       counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
     }
+    postProfileDraftToPreview();
   }
 
-  // Pushes the whole current STUDIO shape to Firestore — the preview iframe only shows
-  // what's actually saved, so it (deliberately) does not update until the studio hits
-  // Save/Save & Next, not on every keystroke.
+  // Pushes the whole current STUDIO shape to Firestore — this is the only thing that
+  // actually goes live for real guests, and only happens on Save/Save & Next.
   function persistStudioProfileToCloud() {
     if (!db) { showSyncFailureToast(null); return; }
     db.collection('studio').doc('profile').set({
@@ -5686,13 +5687,36 @@
     renderSidebar();
   }
 
+  let guestAppOrigin = null;
+  try { guestAppOrigin = new URL(GUEST_APP_URL).origin; } catch (e) { guestAppOrigin = '*'; }
+
+  // Posts the current in-memory (not-yet-saved) STUDIO fields into the preview iframe
+  // so it updates instantly as the studio types/clicks — without writing anything to
+  // Firestore, so real guests never see a draft. The iframe runs the actual guest app,
+  // which applies these via the exact same applyStudioProfile() its live Firestore
+  // listener normally calls (see the 'message' listener added in the guest app).
+  function postProfileDraftToPreview() {
+    const iframe = document.getElementById('pw-phone-iframe');
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage({
+      type: 'SNAPFILMER_PROFILE_DRAFT',
+      profile: {
+        name: STUDIO.name, email: STUDIO.email, phone: STUDIO.phone, website: STUDIO.website,
+        about: STUDIO.about, brandColor: STUDIO.brandColor, social: STUDIO.social,
+        logoUrl: STUDIO.logoUrl, coverUrl: STUDIO.coverUrl, portfolioEventId: STUDIO.portfolioEventId,
+      },
+    }, guestAppOrigin);
+  }
+
   function wireProfileWizardStep(key) {
-    // Inputs only mutate STUDIO in-memory as the studio types — the actual Firestore
-    // write (and therefore the iframe preview update) only happens on Save/Save & Next.
+    // Inputs mutate STUDIO in-memory as the studio types AND push a live draft into the
+    // preview iframe (postProfileDraftToPreview) so the preview feels instant — but the
+    // actual Firestore write (what real guests would ever see) only happens on
+    // Save/Save & Next, via persistStudioProfileToCloud().
     function bind(id, apply) {
       const input = document.getElementById(id);
       if (!input) return;
-      input.addEventListener('input', function () { apply(input.value); });
+      input.addEventListener('input', function () { apply(input.value); postProfileDraftToPreview(); });
     }
     if (key === 'company') {
       bind('pw-name', function (v) { STUDIO.name = v; });
@@ -5715,11 +5739,13 @@
         colorPicker.addEventListener('input', function () {
           colorHex.value = colorPicker.value;
           STUDIO.brandColor = colorPicker.value;
+          postProfileDraftToPreview();
         });
         colorHex.addEventListener('input', function () {
           if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) {
             colorPicker.value = colorHex.value;
             STUDIO.brandColor = colorHex.value;
+            postProfileDraftToPreview();
           }
         });
       }
@@ -5730,6 +5756,7 @@
           btn.classList.add('active');
           if (colorPicker) colorPicker.value = STUDIO.brandColor;
           if (colorHex) colorHex.value = STUDIO.brandColor;
+          postProfileDraftToPreview();
         });
       });
     }
@@ -5749,12 +5776,13 @@
             counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
             counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
           }
+          postProfileDraftToPreview();
         });
       });
     }
     if (key === 'portfolio') {
       const sel = document.getElementById('pw-portfolio-event');
-      if (sel) sel.addEventListener('change', function () { STUDIO.portfolioEventId = sel.value; });
+      if (sel) sel.addEventListener('change', function () { STUDIO.portfolioEventId = sel.value; postProfileDraftToPreview(); });
     }
   }
 
