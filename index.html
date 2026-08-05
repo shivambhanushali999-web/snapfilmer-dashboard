@@ -372,9 +372,12 @@
   // stuck with the 4 fixed corners) stored as a percentage of the photo's width/height,
   // so it scales correctly to any photo size. Default sits near the bottom-right corner
   // so switching a tier to "Custom" doesn't make the watermark jump somewhere odd.
+  // logoScale is a % multiplier on the base logo size (100 = the original fixed size
+  // this used to always be) — added because that fixed size read as too small once the
+  // logo was actually shown at real photo scale instead of a tiny form-field thumbnail.
   const WATERMARK_DEFAULTS = {
-    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', logoMode: 'text', customX: 88, customY: 88 },
-    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center', logoMode: 'text', customX: 88, customY: 88 },
+    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', logoMode: 'text', customX: 88, customY: 88, logoScale: 100 },
+    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center', logoMode: 'text', customX: 88, customY: 88, logoScale: 100 },
   };
 
   // Every event gets its own copy of these two tiers (so one event's overrides never
@@ -396,7 +399,7 @@
     const w = e.watermark;
     if (w && w.standard && w.original) return; // already the current shape
     e.watermark = !w ? freshEventWatermark() : {
-      standard: { enabled: !!w.enabled, text: w.text || STUDIO.name, opacity: typeof w.opacity === 'number' ? w.opacity : 55, position: w.position || 'bottom-right', logoMode: 'text', customX: 88, customY: 88 },
+      standard: { enabled: !!w.enabled, text: w.text || STUDIO.name, opacity: typeof w.opacity === 'number' ? w.opacity : 55, position: w.position || 'bottom-right', logoMode: 'text', customX: 88, customY: 88, logoScale: 100 },
       original: Object.assign({}, WATERMARK_DEFAULTS.original),
       dualLogo: !!w.dualLogo,
       sponsorLogoUrl: w.sponsorLogoUrl || '',
@@ -761,6 +764,11 @@
           const tierKey = input.dataset.field.split('.')[1];
           const lbl = document.getElementById('ed-wm-' + tierKey + '-opacity-label');
           if (lbl) lbl.textContent = 'Opacity (' + val + '%)';
+        }
+        if (/^watermark\.(standard|original)\.logoScale$/.test(input.dataset.field)) {
+          const tierKey = input.dataset.field.split('.')[1];
+          const lbl = document.getElementById('ed-wm-' + tierKey + '-logoscale-label');
+          if (lbl) lbl.textContent = 'Logo Size (' + val + '%, used when Content includes Logo)';
         }
         if (input.dataset.field === 'watermark.dualLogo') {
           const row = document.getElementById('ed-sponsor-logo-row');
@@ -2321,29 +2329,40 @@
   // so a plain <a download> is ignored by the browser and just opens a new tab instead.
   // Fetching the bytes first and downloading from a same-origin blob: URL forces a real
   // save-to-disk, same fix applied to the guest app's triggerDownload().
+  function forceDownloadDataUrl(dataUrl, filename) {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   function downloadLightboxPhoto() {
     const p = lightboxPhotos[lightboxIndex];
     if (!p || !p.dataUrl) return;
     const filename = 'photo-' + p.id + '.jpg';
     if (p.dataUrl.indexOf('data:') === 0) {
-      const link = document.createElement('a');
-      link.href = p.dataUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      forceDownloadDataUrl(p.dataUrl, filename);
       return;
     }
-    fetch(p.dataUrl).then(function (res) { return res.blob(); }).then(function (blob) {
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 4000);
+    // Direct cross-origin fetch() to Firebase Storage was silently failing here (no
+    // CORS headers on the response), so the .catch() fallback was firing every time
+    // and just opening the photo in a new tab instead of actually downloading it —
+    // exactly the "download button opens the photo instead" bug reported. Fixed the
+    // same way the guest app's own download button already works: the AWS Lambda
+    // fetches the photo server-to-server (no CORS restriction there) and hands it
+    // back as base64, which the browser CAN force-download directly.
+    fetch(FACE_MATCH_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'download', photoUrl: p.dataUrl }),
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (data.dataUrl) forceDownloadDataUrl(data.dataUrl, filename);
+      else window.open(p.dataUrl, '_blank');
     }).catch(function () {
+      // At least get the studio to the photo if the Lambda call itself fails (e.g.
+      // offline) — better than a silent no-op.
       window.open(p.dataUrl, '_blank');
     });
   }
@@ -4377,7 +4396,8 @@
                   (STUDIO.logoUrl ? '<button type="button" class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeStudioLogo();setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">Remove</button>' : '') +
                 '</div>' +
                 '<div class="hint">Same logo used on your Share/QR codes.</div>' +
-              '</div>'
+              '</div>' +
+              '<div class="field"><label id="wm-' + key + '-logoscale-label">Logo Size (' + w.logoScale + '%)</label><input class="input" type="range" min="50" max="250" step="10" id="wm-' + key + '-logoscale" value="' + w.logoScale + '"></div>'
             : '') +
           (w.logoMode !== 'logo' ? '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' : '') +
           '<div class="field" style="margin-bottom:0;"><label id="wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" id="wm-' + key + '-opacity" value="' + w.opacity + '"></div>' +
@@ -4452,7 +4472,18 @@
     const hasText = w.logoMode !== 'logo' && w.text;
     if (!hasLogo && !hasText) { holder.innerHTML = ''; return; }
     let inner = '';
-    if (hasLogo) inner += '<img src="' + STUDIO.logoUrl + '" style="width:32px;height:32px;object-fit:contain;border-radius:6px;display:block;">';
+    if (hasLogo) {
+      // Sized as a % of the actual preview box's own width (same 10%-of-photo-width
+      // baseline compositeForDownload() bakes into a real download), times the Logo
+      // Size slider — so what's shown here actually matches what guests/downloads will
+      // see, instead of a fixed 32px thumbnail that only looked reasonable in a small
+      // form field, not against a full photo.
+      const wrap = document.getElementById('wm-preview-' + key);
+      const boxW = wrap ? wrap.getBoundingClientRect().width : 300;
+      const logoScale = (w.logoScale || 100) / 100;
+      const logoPx = Math.max(20, Math.round(boxW * 0.1 * logoScale));
+      inner += '<img src="' + STUDIO.logoUrl + '" style="width:' + logoPx + 'px;height:' + logoPx + 'px;object-fit:contain;border-radius:6px;display:block;">';
+    }
     if (hasText) inner += '<span style="color:#fff;font-size:13px;font-weight:800;letter-spacing:.3px;background:rgba(0,0,0,.4);padding:5px 10px;border-radius:8px;white-space:nowrap;">' + w.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>';
     const opacity = Math.max(0, Math.min(100, w.opacity)) / 100;
     let posStyle;
@@ -4512,6 +4543,7 @@
     const enabledInput = document.getElementById('wm-' + key + '-enabled');
     const textInput = document.getElementById('wm-' + key + '-text');
     const opacityInput = document.getElementById('wm-' + key + '-opacity');
+    const logoScaleInput = document.getElementById('wm-' + key + '-logoscale');
     // Position and Watermark Type are now the card-button grids above (see
     // wmPositionBtnHtml/wmTypeBtnHtml + setWatermarkPosition/setWatermarkMode) instead
     // of <select> dropdowns, since those buttons also show/hide the Logo/Text fields
@@ -4523,6 +4555,13 @@
       w.opacity = Number(opacityInput.value);
       const lbl = document.getElementById('wm-' + key + '-opacity-label');
       if (lbl) lbl.textContent = 'Opacity (' + w.opacity + '%)';
+      saveWatermarkDefaults();
+      renderWatermarkPreviewOverlay(key);
+    });
+    if (logoScaleInput) logoScaleInput.addEventListener('input', function () {
+      w.logoScale = Number(logoScaleInput.value);
+      const lbl = document.getElementById('wm-' + key + '-logoscale-label');
+      if (lbl) lbl.textContent = 'Logo Size (' + w.logoScale + '%)';
       saveWatermarkDefaults();
       renderWatermarkPreviewOverlay(key);
     });
@@ -4565,7 +4604,8 @@
         '</select></div>' +
       '</div>' +
       '<div class="field"><label>Watermark Text</label><input class="input" data-field="watermark.' + key + '.text" value="' + w.text + '"></div>' +
-      '<div class="field" style="margin-bottom:0;"><label id="ed-wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" data-field="watermark.' + key + '.opacity" value="' + w.opacity + '"></div>' +
+      '<div class="field"><label id="ed-wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" data-field="watermark.' + key + '.opacity" value="' + w.opacity + '"></div>' +
+      '<div class="field" style="margin-bottom:0;"><label id="ed-wm-' + key + '-logoscale-label">Logo Size (' + (w.logoScale || 100) + '%, used when Content includes Logo)</label><input class="input" type="range" min="50" max="250" step="10" data-field="watermark.' + key + '.logoScale" value="' + (w.logoScale || 100) + '"></div>' +
       (w.position === 'custom' ? '<div class="hint" style="margin-top:8px;">Custom placement is set on the studio-wide Watermark page\'s live preview (drag-to-position there) — this event will use that same spot unless you switch it to one of the fixed corners above.</div>' : '') +
     '</div>';
   }
