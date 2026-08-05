@@ -830,6 +830,7 @@
       '<div id="share-modal-root"></div>' +
       '<div id="guest-upload-modal-root"></div>' +
       '<div id="move-album-modal-root"></div>' +
+      '<div id="cover-crop-modal-root"></div>' +
       '<div id="lightbox-root"></div>';
     renderSidebar();
   }
@@ -2007,15 +2008,216 @@
     }).catch(function () { alert('Could not update highlight status — please try again.'); });
   }
 
+  // Used to just be a bare alert() for "Album Cover" (nothing was ever actually saved
+  // anywhere) and a local-only e.cover = ... for "Event Cover" (never synced to
+  // Firestore, so it looked like it worked but vanished on refresh and never reached
+  // the guest app at all). Both now open a real crop tool — matching Kamero, which
+  // lets you frame the cover before it's set — and actually persist the result.
   function setLightboxAs(kind) {
     const p = lightboxPhotos[lightboxIndex];
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
     if (!p || !e) return;
-    if (kind === 'cover') {
-      e.cover = p.dataUrl;
-      alert('Set as this event\'s cover photo.');
-    } else {
-      alert('Set as the cover photo for album "' + (p.album || 'Unsorted') + '".');
+    if (kind === 'album' && !p.album) {
+      alert('This photo is Unsorted. Move it into a real album first (use the dropdown above), then set it as that album\'s cover.');
+      return;
+    }
+    openCoverCropModal(kind, p, e);
+  }
+
+  // ================= Cover crop tool =================
+  // Real drag-to-reposition + zoom cropper, not just "upload and hope it's framed
+  // right" — matches the crop step Kamero shows before confirming an Event/Album
+  // cover. Output is a fixed 4:3 crop so cover art looks consistent across every
+  // album/event card instead of whatever aspect the original photo happened to be.
+  let coverCrop = null; // { kind, photo, eventId, albumName, scale, offsetX, offsetY, naturalW, naturalH, viewportW, viewportH, dragging, lastX, lastY }
+
+  function openCoverCropModal(kind, p, e) {
+    const root = document.getElementById('cover-crop-modal-root');
+    if (!root) return;
+    coverCrop = {
+      kind: kind, photo: p, eventId: e.id, albumName: p.album || '',
+      scale: 1, offsetX: 0, offsetY: 0, naturalW: 0, naturalH: 0,
+      viewportW: 0, viewportH: 0, dragging: false, lastX: 0, lastY: 0,
+    };
+    const title = kind === 'cover' ? 'Set Event Cover' : ('Set Cover for "' + p.album + '"');
+    root.innerHTML =
+      '<div style="position:fixed;inset:0;background:rgba(20,16,20,.6);z-index:320;display:flex;align-items:center;justify-content:center;padding:24px;">' +
+        '<div style="background:var(--surface);border-radius:18px;max-width:480px;width:100%;padding:24px 24px 20px;box-shadow:0 30px 70px -24px rgba(0,0,0,.4);">' +
+          '<div class="card-title" style="margin:0 0 4px;">' + title + '</div>' +
+          '<p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;">Drag to reposition, use the slider to zoom, then save.</p>' +
+          '<div id="cover-crop-viewport" style="position:relative;width:100%;aspect-ratio:4/3;overflow:hidden;border-radius:12px;background:#000;cursor:grab;touch-action:none;">' +
+            // crossorigin="anonymous" matters here specifically because photo bytes live
+            // in Firebase Storage (a different origin than this dashboard page) — without
+            // it, drawing this <img> onto the crop canvas below "taints" the canvas and
+            // toBlob()/toDataURL() throw a security error instead of producing an image.
+            '<img id="cover-crop-img" crossorigin="anonymous" src="' + p.dataUrl + '" style="position:absolute;left:0;top:0;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none;">' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-top:14px;">' +
+            '<i data-icon="IMAGE" style="opacity:.5;flex-shrink:0;"></i>' +
+            '<input type="range" id="cover-crop-zoom" min="100" max="300" value="100" style="flex:1;" oninput="onCoverCropZoom(this.value)">' +
+          '</div>' +
+          '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">' +
+            '<button class="btn-outline btn-sm" onclick="closeCoverCropModal()">Cancel</button>' +
+            '<button class="btn-solid btn-sm" id="cover-crop-save-btn" onclick="confirmCoverCrop()">Save Cover</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    fillIcons();
+    const img = document.getElementById('cover-crop-img');
+    const viewport = document.getElementById('cover-crop-viewport');
+    img.onload = function () {
+      coverCrop.naturalW = img.naturalWidth;
+      coverCrop.naturalH = img.naturalHeight;
+      const rect = viewport.getBoundingClientRect();
+      coverCrop.viewportW = rect.width;
+      coverCrop.viewportH = rect.height;
+      const baseScale = Math.max(coverCrop.viewportW / coverCrop.naturalW, coverCrop.viewportH / coverCrop.naturalH);
+      coverCrop.baseScale = baseScale;
+      const dispW = coverCrop.naturalW * baseScale;
+      const dispH = coverCrop.naturalH * baseScale;
+      coverCrop.offsetX = (coverCrop.viewportW - dispW) / 2;
+      coverCrop.offsetY = (coverCrop.viewportH - dispH) / 2;
+      renderCoverCropImg();
+    };
+    if (img.complete && img.naturalWidth) img.onload();
+    viewport.addEventListener('pointerdown', coverCropPointerDown);
+    window.addEventListener('pointermove', coverCropPointerMove);
+    window.addEventListener('pointerup', coverCropPointerUp);
+  }
+
+  function renderCoverCropImg() {
+    const img = document.getElementById('cover-crop-img');
+    if (!img || !coverCrop) return;
+    const dispW = coverCrop.naturalW * coverCrop.baseScale * coverCrop.scale;
+    const dispH = coverCrop.naturalH * coverCrop.baseScale * coverCrop.scale;
+    img.style.width = dispW + 'px';
+    img.style.height = dispH + 'px';
+    img.style.transform = 'translate(' + coverCrop.offsetX + 'px, ' + coverCrop.offsetY + 'px)';
+  }
+
+  // Keeps the image edge from ever being dragged past the viewport border, i.e. no
+  // gap of empty black space can appear — the cover is always fully "covered".
+  function clampCoverCropOffsets() {
+    const dispW = coverCrop.naturalW * coverCrop.baseScale * coverCrop.scale;
+    const dispH = coverCrop.naturalH * coverCrop.baseScale * coverCrop.scale;
+    const minX = Math.min(0, coverCrop.viewportW - dispW);
+    const minY = Math.min(0, coverCrop.viewportH - dispH);
+    coverCrop.offsetX = Math.max(minX, Math.min(0, coverCrop.offsetX));
+    coverCrop.offsetY = Math.max(minY, Math.min(0, coverCrop.offsetY));
+  }
+
+  function coverCropPointerDown(ev) {
+    if (!coverCrop) return;
+    coverCrop.dragging = true;
+    coverCrop.lastX = ev.clientX;
+    coverCrop.lastY = ev.clientY;
+    const viewport = document.getElementById('cover-crop-viewport');
+    if (viewport) viewport.style.cursor = 'grabbing';
+  }
+
+  function coverCropPointerMove(ev) {
+    if (!coverCrop || !coverCrop.dragging) return;
+    const dx = ev.clientX - coverCrop.lastX;
+    const dy = ev.clientY - coverCrop.lastY;
+    coverCrop.lastX = ev.clientX;
+    coverCrop.lastY = ev.clientY;
+    coverCrop.offsetX += dx;
+    coverCrop.offsetY += dy;
+    clampCoverCropOffsets();
+    renderCoverCropImg();
+  }
+
+  function coverCropPointerUp() {
+    if (!coverCrop) return;
+    coverCrop.dragging = false;
+    const viewport = document.getElementById('cover-crop-viewport');
+    if (viewport) viewport.style.cursor = 'grab';
+  }
+
+  function onCoverCropZoom(value) {
+    if (!coverCrop) return;
+    // Keep the viewport's center pointing at the same spot in the image while the
+    // zoom changes, instead of the image jumping to re-center on every slider move.
+    const oldScale = coverCrop.scale;
+    const newScale = Number(value) / 100;
+    const cx = coverCrop.viewportW / 2, cy = coverCrop.viewportH / 2;
+    const imgX = (cx - coverCrop.offsetX) / oldScale;
+    const imgY = (cy - coverCrop.offsetY) / oldScale;
+    coverCrop.scale = newScale;
+    coverCrop.offsetX = cx - imgX * newScale;
+    coverCrop.offsetY = cy - imgY * newScale;
+    clampCoverCropOffsets();
+    renderCoverCropImg();
+  }
+
+  function closeCoverCropModal() {
+    window.removeEventListener('pointermove', coverCropPointerMove);
+    window.removeEventListener('pointerup', coverCropPointerUp);
+    const root = document.getElementById('cover-crop-modal-root');
+    if (root) root.innerHTML = '';
+    coverCrop = null;
+  }
+
+  function confirmCoverCrop() {
+    if (!coverCrop) return;
+    const btn = document.getElementById('cover-crop-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    const c = coverCrop;
+    const dispScale = c.baseScale * c.scale;
+    // Map the visible viewport rectangle back into the original, un-scaled image's
+    // own pixel coordinates, then draw exactly that rectangle onto a fixed 4:3 output
+    // canvas — this is what actually "bakes in" the crop/pan/zoom into a real image
+    // file, instead of only ever looking right inside this modal.
+    const sx = -c.offsetX / dispScale;
+    const sy = -c.offsetY / dispScale;
+    const sw = c.viewportW / dispScale;
+    const sh = c.viewportH / dispScale;
+    const outW = 800, outH = 600;
+    const canvas = document.createElement('canvas');
+    canvas.width = outW; canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    const img = document.getElementById('cover-crop-img');
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+    // drawImage() itself never throws for a cross-origin source — the canvas just
+    // silently becomes "tainted", and it's toBlob()/toDataURL() below that then throws
+    // a SecurityError. That's what the try/catch around those calls is guarding
+    // against, not this line.
+    const finish = function (url) {
+      const e = EVENTS.find(function (x) { return x.id === c.eventId; });
+      if (e) {
+        if (c.kind === 'cover') {
+          e.cover = url;
+          syncEventPrivacyToCloud(e.id, { cover: url });
+        } else {
+          const album = e.albums.find(function (a) { return a.name === c.albumName; });
+          if (album) {
+            album.cover = url;
+            syncEventPrivacyToCloud(e.id, { albums: e.albums });
+          }
+        }
+        renderAlbumSidebar(e);
+        if (currentEventId === e.id) renderEventPhotosGrid();
+      }
+      closeCoverCropModal();
+    };
+    try {
+      if (canvas.toBlob) {
+        canvas.toBlob(function (blob) {
+          if (!blob || !storage) { finish(canvas.toDataURL('image/jpeg', 0.85)); return; }
+          uploadPhotoToStorage(blob, 'cover.jpg', 'photos/' + c.eventId).then(finish).catch(function () {
+            alert('Could not upload the cropped cover — please try again.');
+            if (btn) { btn.disabled = false; btn.textContent = 'Save Cover'; }
+          });
+        }, 'image/jpeg', 0.85);
+      } else {
+        finish(canvas.toDataURL('image/jpeg', 0.85));
+      }
+    } catch (err) {
+      // Tainted-canvas SecurityError — the photo's host didn't allow cross-origin
+      // pixel reads. Rare in practice for this project's own Firebase Storage photos,
+      // but fails loudly and recoverably instead of silently doing nothing.
+      alert('Could not crop this photo (a browser security restriction blocked it) — please try a different photo.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save Cover'; }
     }
   }
 
