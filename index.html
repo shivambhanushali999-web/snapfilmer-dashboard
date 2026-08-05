@@ -829,6 +829,7 @@
       '</div>' +
       '<div id="share-modal-root"></div>' +
       '<div id="guest-upload-modal-root"></div>' +
+      '<div id="move-album-modal-root"></div>' +
       '<div id="lightbox-root"></div>';
     renderSidebar();
   }
@@ -1341,11 +1342,11 @@
         '</div>' +
       '</div>';
 
-    // Default to "All Photos" every time an event is opened — defaulting into
-    // whichever album happened to be first used to silently hide any photo that was
-    // uploaded into a different album (or Unsorted), which looked exactly like the
-    // upload had vanished. All Photos guarantees nothing is ever hidden by default.
-    selectedAlbumFilter = 'ALL';
+    // Land straight in the first real album, matching Kamero — there's no more generic
+    // "All Photos" default landing view. If this event has zero albums yet, leave the
+    // filter unset; renderEventPhotosGrid() below shows a "create an album" prompt
+    // instead of any photos in that case.
+    selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
     gridSelectMode = false; gridSelectedPhotoIds = [];
     if (!Array.isArray(e.videos)) e.videos = [];
     renderAlbumSidebar(e);
@@ -1596,23 +1597,36 @@
     if (countEl) countEl.textContent = e.albums.length;
     if (!list) return;
     list.innerHTML = '';
-    // "All Photos" and "Unsorted" are always available, even with zero named albums —
-    // this is what guarantees a photo can never be uploaded/reopened into a state where
-    // it looks like it's gone; there's always a view that shows literally everything.
-    const totalCount = dashboardEventPhotos.length;
+    // "All Photos" and "Unsorted" used to always sit here as permanent folder rows —
+    // removed on request, to match Kamero, where the sidebar only ever lists real
+    // camera/album folders you actually created. Photos with no album still exist
+    // (guest uploads before an album pick, older imports, etc.) but they're no longer
+    // a permanent nav destination — see the "needs filing" banner below instead, which
+    // is a one-off action to move them into a real album, not a folder to browse.
     const unsortedCount = dashboardEventPhotos.filter(function (p) { return !p.album; }).length;
-    // Highlights shows up as a folder-like entry right alongside All Photos/Unsorted —
-    // clicking it filters the same grid to just isHighlight:true photos, so the studio
-    // browses/manages Highlights exactly the same way as any other album instead of
-    // only being able to reach it one photo at a time from the lightbox star toggle.
+    // Highlights shows up as a folder-like entry — clicking it filters the same grid to
+    // just isHighlight:true photos, so the studio browses/manages Highlights exactly
+    // the same way as any other album instead of only being able to reach it one photo
+    // at a time from the lightbox star toggle.
     const highlightCount = dashboardEventPhotos.filter(function (p) { return p.isHighlight; }).length;
     // The Highlights row only exists in this list while Highlight is actually turned
     // on for the event (e.highlightEnabled) — disabling it should make the whole
     // folder-view disappear from the sidebar again, same as if it never had photos in
     // it, rather than leaving a dead/empty entry sitting there permanently.
-    const specials = [{ key: 'ALL', label: 'All Photos', icon: 'IMAGE', count: totalCount }, { key: '', label: 'Unsorted', icon: 'FOLDER', count: unsortedCount }];
+    const specials = [];
     if (e.highlightEnabled) specials.push({ key: 'HIGHLIGHTS', label: 'Highlights', icon: 'STAR', count: highlightCount, round: true });
-    if (selectedAlbumFilter === 'HIGHLIGHTS' && !e.highlightEnabled) selectedAlbumFilter = 'ALL';
+    if (selectedAlbumFilter === 'HIGHLIGHTS' && !e.highlightEnabled) {
+      selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
+    }
+    if (unsortedCount > 0) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'padding:9px 10px;margin:0 -8px 6px;border-radius:8px;cursor:pointer;background:rgba(240,166,62,.12);border:1px solid rgba(240,166,62,.35);';
+      banner.innerHTML = '<div style="display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:#B5762A;"><i data-icon="WARNING" style="width:14px;height:14px;flex-shrink:0;"></i>' +
+        unsortedCount + ' photo' + (unsortedCount === 1 ? '' : 's') + ' need' + (unsortedCount === 1 ? 's' : '') + ' an album</div>' +
+        '<div style="font-size:11px;color:var(--muted);margin-top:2px;">Review &amp; File &rarr;</div>';
+      banner.addEventListener('click', reviewUnsortedPhotos);
+      list.appendChild(banner);
+    }
     specials.forEach(function (special) {
       const row = document.createElement('div');
       const active = selectedAlbumFilter === special.key;
@@ -1661,6 +1675,20 @@
     fillIcons();
   }
 
+  // "Unsorted" isn't a permanent folder in the sidebar anymore — this is the one-off
+  // action behind the amber banner above, for when there actually are photos with no
+  // album (guest uploads before an album pick, older imports, etc.). Turns select mode
+  // on immediately since the whole point of landing here is to bulk-move them into a
+  // real album via the "Move to Album" bulk action, not to browse them indefinitely.
+  function reviewUnsortedPhotos() {
+    selectedAlbumFilter = '';
+    gridSelectMode = true;
+    gridSelectedPhotoIds = [];
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (e) renderAlbumSidebar(e);
+    renderEventPhotosGrid();
+  }
+
   function selectAlbum(name) {
     selectedAlbumFilter = name;
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
@@ -1707,48 +1735,56 @@
     }
   }
 
-  // selectedAlbumFilter meanings: 'ALL' = every photo in the event (the default now,
-  // and the only view that guarantees nothing is ever silently hidden), '' = Unsorted
-  // (no album tag), any other string = that specific album's name. Previously there
-  // was no "ALL" concept at all — opening an event always jumped straight into
-  // whichever album happened to be first, so photos uploaded into a *different* album
-  // (or Unsorted) looked like they'd vanished until you happened to click the right
-  // folder in the sidebar.
+  // selectedAlbumFilter meanings: null = nothing selected (event has zero albums yet —
+  // shows a "create an album" prompt instead of a grid), 'HIGHLIGHTS' = curated view,
+  // '' = the one-off Unsorted-review triggered from the amber banner (not a permanent
+  // folder), any other string = that specific real album's name. There's no more 'ALL'
+  // ("All Photos") view — every real photo lives in a folder you actually created,
+  // matching Kamero, and the rare unsorted leftovers get filed away via "Move to Album"
+  // rather than lived in permanently.
   function renderEventPhotosGrid() {
     const titleEl = document.getElementById('ep-album-title');
     const countEl = document.getElementById('ep-album-count');
     const grid = document.getElementById('ep-photo-grid');
     const targetNote = document.getElementById('ep-upload-target-note');
     if (targetNote) {
-      const targetLabel = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? '"' + selectedAlbumFilter + '"' : 'Unsorted';
+      const targetLabel = (selectedAlbumFilter && selectedAlbumFilter !== 'HIGHLIGHTS') ? '"' + selectedAlbumFilter + '"' : 'Unsorted';
       targetNote.innerHTML = selectedAlbumFilter === 'HIGHLIGHTS'
         ? 'Uploading to: <strong style="color:var(--ink);">Highlights</strong> — new photos here are automatically marked as highlighted (and stay visible to every guest, even with Face-Based Privacy on).'
-        : 'Uploading to: <strong style="color:var(--ink);">' + targetLabel + '</strong>' +
-          (selectedAlbumFilter === 'ALL' ? ' — select a folder on the left to upload into a specific album instead.' : '');
+        : selectedAlbumFilter
+          ? 'Uploading to: <strong style="color:var(--ink);">' + targetLabel + '</strong>'
+          : 'Create an album on the left first, then upload straight into it.';
     }
     if (!grid) return;
-    const filtered = selectedAlbumFilter === 'ALL'
-      ? dashboardEventPhotos
-      : selectedAlbumFilter === 'HIGHLIGHTS'
-        ? dashboardEventPhotos.filter(function (p) { return p.isHighlight; })
-        : selectedAlbumFilter
-          ? dashboardEventPhotos.filter(function (p) { return p.album === selectedAlbumFilter; })
-          : dashboardEventPhotos.filter(function (p) { return !p.album; });
-    if (titleEl) titleEl.textContent = selectedAlbumFilter === 'ALL' ? 'All Photos' : selectedAlbumFilter === 'HIGHLIGHTS' ? 'Highlights' : (selectedAlbumFilter || 'Unsorted Photos');
+    // null = no album exists yet for this event at all. '' is deliberately distinct —
+    // that's the one-off Unsorted-review view opened from the amber banner.
+    if (selectedAlbumFilter === null) {
+      if (titleEl) titleEl.textContent = 'No albums yet';
+      if (countEl) countEl.textContent = '';
+      grid.innerHTML = '<div class="empty-note">Add an album on the left to start uploading and organizing photos into folders, just like your camera folders (Cam 1, Cam 2, ...).</div>';
+      return;
+    }
+    const filtered = selectedAlbumFilter === 'HIGHLIGHTS'
+      ? dashboardEventPhotos.filter(function (p) { return p.isHighlight; })
+      : selectedAlbumFilter
+        ? dashboardEventPhotos.filter(function (p) { return p.album === selectedAlbumFilter; })
+        : dashboardEventPhotos.filter(function (p) { return !p.album; });
+    if (titleEl) titleEl.textContent = selectedAlbumFilter === 'HIGHLIGHTS' ? 'Highlights' : (selectedAlbumFilter || 'Unsorted Photos');
     if (countEl) countEl.textContent = filtered.length + ' photos' + (gridSelectMode && gridSelectedPhotoIds.length ? ' &middot; ' + gridSelectedPhotoIds.length + ' selected' : '');
     grid.innerHTML = '';
     if (!filtered.length) {
       grid.innerHTML = '<div class="empty-note">' +
         (selectedAlbumFilter === 'HIGHLIGHTS'
-          ? 'No Highlights yet — upload photos right here to mark them highlighted automatically, or go to "All Photos", tap Select, choose photos, then "Add to Highlights".'
-          : 'No photos here yet — upload above to add some to ' + (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' ? '"' + selectedAlbumFilter + '"' : 'this event') + '.') +
+          ? 'No Highlights yet — upload photos right here to mark them highlighted automatically, or select photos in an album, then "Add to Highlights".'
+          : 'No photos here yet — upload above to add some to ' + (selectedAlbumFilter ? '"' + selectedAlbumFilter + '"' : 'this event') + '.') +
         '</div>';
       return;
     }
     if (gridSelectMode && gridSelectedPhotoIds.length) {
       const bar = document.createElement('div');
-      bar.style.cssText = 'grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;';
+      bar.style.cssText = 'grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;flex-wrap:wrap;';
       bar.innerHTML =
+        '<button class="btn-outline btn-sm" onclick="openMoveToAlbumModal()">' + ICONS.FOLDER + ' Move to Album</button>' +
         (selectedAlbumFilter === 'HIGHLIGHTS'
           ? '<button class="btn-outline btn-sm" onclick="removeSelectedFromHighlights()">' + ICONS.STAR + ' Remove ' + gridSelectedPhotoIds.length + ' from Highlights</button>'
           : '<button class="btn-outline btn-sm" onclick="addSelectedToHighlights()">' + ICONS.STAR + ' Add ' + gridSelectedPhotoIds.length + ' to Highlights</button>') +
@@ -2264,14 +2300,14 @@
     evt.target.value = '';
     if (!files.length) return;
     const eventId = currentEventId;
-    // "ALL" (All Photos) isn't a real album — uploading while it's selected falls back
-    // to Unsorted, same as before, but now #ep-upload-target-note always tells the
-    // studio exactly where a photo is about to land *before* they click Upload, so a
-    // photo can no longer land somewhere unexpected without them seeing it first.
-    // 'HIGHLIGHTS' is a curated view, not a real album — falls back to Unsorted here
-    // exactly like 'ALL' does, so an upload made while browsing Highlights can't end up
-    // tagged with a phantom album named "HIGHLIGHTS" that no sidebar row corresponds to.
-    const albumName = (selectedAlbumFilter && selectedAlbumFilter !== 'ALL' && selectedAlbumFilter !== 'HIGHLIGHTS') ? selectedAlbumFilter : '';
+    // #ep-upload-target-note always tells the studio exactly where a photo is about to
+    // land *before* they click Upload, so a photo can no longer land somewhere
+    // unexpected without them seeing it first. 'HIGHLIGHTS' is a curated view, not a
+    // real album — falls back to Unsorted, so an upload made while browsing Highlights
+    // can't end up tagged with a phantom album named "HIGHLIGHTS" that no sidebar row
+    // corresponds to. Same for '' (the one-off Unsorted-review view) and null (no
+    // albums exist yet) — both just land the upload in Unsorted too.
+    const albumName = (selectedAlbumFilter && selectedAlbumFilter !== 'HIGHLIGHTS') ? selectedAlbumFilter : '';
     // Uploading while Highlights is the selected folder marks the new photos
     // isHighlight:true directly — matches the real Kamero tooltip's own wording
     // ("Upload or move selected photos here to make them public"). They still also
@@ -2409,7 +2445,7 @@
     if (!confirm('Delete album "' + name + '"? Photos already in it stay in the event, just unsorted.')) return;
     e.albums = e.albums.filter(function (a) { return a.name !== name; });
     syncEventPrivacyToCloud(e.id, { albums: e.albums });
-    if (selectedAlbumFilter === name) selectedAlbumFilter = 'ALL';
+    if (selectedAlbumFilter === name) selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
     renderAlbumSidebar(e);
     renderEventPhotosGrid();
   }
@@ -2503,6 +2539,82 @@
       const e = EVENTS.find(function (x) { return x.id === currentEventId; });
       if (e) renderAlbumSidebar(e);
     }).catch(function () { alert('Could not remove some photos from Highlights — please try again.'); });
+  }
+
+  // Real fix for "how do I get unsorted photos into an album" now that there's no
+  // permanent "Unsorted" folder to leave them sitting in — lets the studio bulk-move
+  // the current selection (usually opened via the amber "N photos need an album"
+  // banner, but works from any album's grid too) into an existing album, or a brand
+  // new one typed right here.
+  function openMoveToAlbumModal() {
+    const root = document.getElementById('move-album-modal-root');
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (!root || !e || !gridSelectedPhotoIds.length) return;
+    const count = gridSelectedPhotoIds.length;
+    const existingRows = e.albums.map(function (a) {
+      return '<div class="toggle-row" data-move-album="' + a.name + '" style="padding:9px 10px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;">' +
+        (a.cover ? '<img src="' + a.cover + '" style="width:20px;height:20px;border-radius:5px;object-fit:cover;flex-shrink:0;">' : '<i data-icon="FOLDER"></i>') +
+        a.name + ' <span style="color:var(--muted);font-size:11.5px;">(' + (a.count || 0) + ')</span>' +
+      '</div>';
+    }).join('');
+    root.innerHTML =
+      '<div style="position:fixed;inset:0;background:rgba(20,16,20,.5);z-index:300;display:flex;align-items:center;justify-content:center;padding:24px;" onmousedown="if(event.target===this)closeMoveToAlbumModal()">' +
+        '<div style="background:var(--surface);border-radius:18px;max-width:420px;width:100%;padding:26px 26px 22px;position:relative;box-shadow:0 30px 70px -24px rgba(0,0,0,.4);">' +
+          '<div class="card-title" style="margin:0 0 4px;">Move ' + count + ' photo' + (count === 1 ? '' : 's') + ' to album</div>' +
+          '<p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;">Pick an existing folder, or create a new one below.</p>' +
+          '<div id="move-album-existing-list" style="max-height:220px;overflow-y:auto;margin-bottom:' + (existingRows ? '14px' : '0') + ';">' + existingRows + '</div>' +
+          '<div class="field"><label>New album</label><input class="input" id="move-album-new-name" placeholder="e.g. Cam 3"></div>' +
+          '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">' +
+            '<button class="btn-outline btn-sm" onclick="closeMoveToAlbumModal()">Cancel</button>' +
+            '<button class="btn-solid btn-sm" onclick="confirmMoveToNewAlbum()">Create &amp; Move</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    root.querySelectorAll('[data-move-album]').forEach(function (row) {
+      row.addEventListener('click', function () { moveSelectedPhotosToAlbum(row.dataset.moveAlbum); });
+    });
+    fillIcons();
+  }
+
+  function closeMoveToAlbumModal() {
+    const root = document.getElementById('move-album-modal-root');
+    if (root) root.innerHTML = '';
+  }
+
+  function confirmMoveToNewAlbum() {
+    const input = document.getElementById('move-album-new-name');
+    const name = input ? input.value.trim() : '';
+    if (!name) { if (input) input.focus(); return; }
+    const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+    if (!e) return;
+    if (e.albums.some(function (a) { return a.name.toLowerCase() === name.toLowerCase(); })) {
+      alert('An album named "' + name + '" already exists — pick it from the list above instead.');
+      return;
+    }
+    e.albums.push({ name: name, count: 0, cover: '' });
+    syncEventPrivacyToCloud(e.id, { albums: e.albums });
+    moveSelectedPhotosToAlbum(name);
+  }
+
+  function moveSelectedPhotosToAlbum(albumName) {
+    if (!gridSelectedPhotoIds.length || !db || !albumName) return;
+    const ids = gridSelectedPhotoIds.slice();
+    Promise.all(ids.map(function (id) { return db.collection('photos').doc(id).set({ album: albumName }, { merge: true }); })).then(function () {
+      ids.forEach(function (id) {
+        const p = dashboardEventPhotos.find(function (x) { return x.id === id; });
+        if (p) p.album = albumName;
+      });
+      gridSelectedPhotoIds = [];
+      gridSelectMode = false;
+      closeMoveToAlbumModal();
+      const e = EVENTS.find(function (x) { return x.id === currentEventId; });
+      if (e) {
+        reconcileAlbumCounts(e.id);
+        // Jump straight into the album the photos just landed in, so the studio sees
+        // them arrive instead of wondering whether the move actually worked.
+        selectAlbum(albumName);
+      }
+    }).catch(function () { alert('Could not move some photos — please try again.'); });
   }
 
   // ================= Event Detail action panels =================
