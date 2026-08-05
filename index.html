@@ -211,6 +211,13 @@
   .tab-btn.active { background: var(--ink); color: #fff; }
 
   .empty-note { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 13px; }
+
+  /* Watermark config: Position / Type picker buttons, styled like real Kamero's
+     "Choose Position" / "Watermark Type" cards (a highlighted card-button, not a
+     dropdown) so the whole settings column reads the same way. */
+  .wm-pos-btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 700; color: var(--ink); cursor: pointer; text-align: center; }
+  .wm-pos-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .wm-pos-btn.wm-type-btn { justify-content: flex-start; padding-left: 14px; width: 100%; }
 </style>
 </head>
 <body>
@@ -4313,38 +4320,72 @@
     db.collection('studio').doc('profile').set({ watermarkDefaults: WATERMARK_DEFAULTS }, { merge: true }).catch(showSyncFailureToast);
   }
 
+  function wmPositionBtnHtml(key, value, label) {
+    const active = WATERMARK_DEFAULTS[key].position === value;
+    return '<button type="button" class="wm-pos-btn' + (active ? ' active' : '') + '" onclick="setWatermarkPosition(\'' + key + '\',\'' + value + '\')">' + label + '</button>';
+  }
+
+  function wmTypeBtnHtml(key, value, label) {
+    const active = WATERMARK_DEFAULTS[key].logoMode === value;
+    return '<button type="button" class="wm-pos-btn wm-type-btn' + (active ? ' active' : '') + '" onclick="setWatermarkMode(\'' + key + '\',\'' + value + '\')">' + label + '</button>';
+  }
+
+  function setWatermarkPosition(key, value) {
+    WATERMARK_DEFAULTS[key].position = value;
+    saveWatermarkDefaults();
+    renderWatermarkPage(document.getElementById('page-content'));
+  }
+
+  function setWatermarkMode(key, value) {
+    WATERMARK_DEFAULTS[key].logoMode = value;
+    saveWatermarkDefaults();
+    renderWatermarkPage(document.getElementById('page-content'));
+  }
+
+  // Two-column layout — a compact settings column on the left (position grid,
+  // watermark type, logo, opacity) and a large live preview on the right — matching
+  // how Kamero's own "Configure your standard watermark" screen is laid out, instead
+  // of stacking a small preview underneath a long single column of form fields (which
+  // made the whole card feel oversized and the photo itself cramped/small).
   function watermarkCard(key, title, desc) {
     const w = WATERMARK_DEFAULTS[key];
     return '<div class="card" style="margin-bottom:18px;">' +
       '<div class="card-title">' + title + '</div>' +
       '<div class="card-sub">' + desc + '</div>' +
       toggleRowHtml('Enable ' + title, 'Turn this watermark on for all new events by default.', w.enabled, 'wm-' + key + '-enabled', '') +
-      '<div class="grid-2" style="margin-top:6px;">' +
-        '<div class="field"><label>Watermark Content</label><select class="input" id="wm-' + key + '-mode">' +
-          '<option value="text"' + (w.logoMode === 'text' ? ' selected' : '') + '>Text only</option>' +
-          '<option value="logo"' + (w.logoMode === 'logo' ? ' selected' : '') + '>Logo only</option>' +
-          '<option value="both"' + (w.logoMode === 'both' ? ' selected' : '') + '>Text + Logo</option>' +
-        '</select></div>' +
-        '<div class="field"><label>Position</label><select class="input" id="wm-' + key + '-position">' +
-          '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
-          '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
-          '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
-          '<option value="custom"' + (w.position === 'custom' ? ' selected' : '') + '>Custom (drag on preview)</option>' +
-        '</select></div>' +
-      '</div>' +
-      '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' +
-      '<div class="field"><label id="wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" id="wm-' + key + '-opacity" value="' + w.opacity + '"></div>' +
-      '<div class="field"><label>Logo (used when Content is set to Logo)</label>' +
-        '<div style="display:flex;align-items:center;gap:10px;">' +
-          (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo uploaded yet.</span>') +
-          '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change Logo' : 'Upload Logo') +
-            '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event);setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">' +
-          '</label>' +
+      '<div style="display:flex;gap:22px;align-items:flex-start;margin-top:10px;flex-wrap:wrap;">' +
+        '<div style="width:230px;flex-shrink:0;">' +
+          '<div style="font-size:12.5px;font-weight:800;margin-bottom:8px;">Choose Position</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+            wmPositionBtnHtml(key, 'top-left', 'Top Left') + wmPositionBtnHtml(key, 'top-right', 'Top Right') +
+            wmPositionBtnHtml(key, 'bottom-left', 'Bottom Left') + wmPositionBtnHtml(key, 'bottom-right', 'Bottom Right') +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px;">' +
+            wmPositionBtnHtml(key, 'center', 'Center') + wmPositionBtnHtml(key, 'custom', 'Custom') +
+          '</div>' +
+          '<div style="font-size:12.5px;font-weight:800;margin-bottom:8px;">Watermark Type</div>' +
+          '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">' +
+            wmTypeBtnHtml(key, 'text', 'Text Watermark') + wmTypeBtnHtml(key, 'logo', 'Image Watermark') + wmTypeBtnHtml(key, 'both', 'Text + Image') +
+          '</div>' +
+          (w.logoMode !== 'text'
+            ? '<div class="field">' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                  (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo yet.</span>') +
+                  '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change' : 'Upload') +
+                    '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event);setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">' +
+                  '</label>' +
+                  (STUDIO.logoUrl ? '<button type="button" class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeStudioLogo();setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">Remove</button>' : '') +
+                '</div>' +
+                '<div class="hint">Same logo used on your Share/QR codes.</div>' +
+              '</div>'
+            : '') +
+          (w.logoMode !== 'logo' ? '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' : '') +
+          '<div class="field" style="margin-bottom:0;"><label id="wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" id="wm-' + key + '-opacity" value="' + w.opacity + '"></div>' +
         '</div>' +
-        '<div class="hint">This is the same logo used on your Share/QR codes — upload it once, use it everywhere.</div>' +
-      '</div>' +
-      '<div class="field" style="margin-bottom:0;"><label>Live Preview' + (w.position === 'custom' ? ' <span style="font-weight:400;color:var(--muted);">— drag the watermark on the photo to place it exactly where you want</span>' : '') + '</label>' +
-        watermarkPreviewHtml(key) +
+        '<div style="flex:1;min-width:300px;">' +
+          '<div style="font-size:12.5px;font-weight:800;margin-bottom:8px;">Live Preview' + (w.position === 'custom' ? ' <span style="font-weight:400;color:var(--muted);">— drag directly on the photo to place it exactly where you want</span>' : '') + '</div>' +
+          watermarkPreviewHtml(key) +
+        '</div>' +
       '</div>' +
     '</div>';
   }
@@ -4373,14 +4414,15 @@
     if (wmPreviewIndex[key] >= photos.length) wmPreviewIndex[key] = 0;
     const hasPhotos = photos.length > 0;
     const src = hasPhotos ? photos[wmPreviewIndex[key]] : '';
-    return '<div class="wm-live-preview" id="wm-preview-' + key + '" style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;background:var(--bg);' + (hasPhotos ? '' : 'display:flex;align-items:center;justify-content:center;') + '">' +
+    return '<div class="wm-live-preview" id="wm-preview-' + key + '" style="position:relative;display:block;width:100%;min-height:280px;border-radius:12px;overflow:hidden;aspect-ratio:4/3;background:var(--bg);">' +
       (hasPhotos
-        ? '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">'
-        : '<span class="card-sub" style="margin:0;text-align:center;padding:0 20px;">Upload your first event photo to see a live preview here.</span>') +
+        ? '<img src="' + src + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
+        : '') +
+      '<span class="card-sub" style="margin:0;text-align:center;padding:0 20px;' + (hasPhotos ? 'display:none;' : 'display:flex;') + 'align-items:center;justify-content:center;position:absolute;inset:0;">Upload your first event photo to see a live preview here.</span>' +
       '<div id="wm-preview-overlay-' + key + '"></div>' +
       (photos.length > 1
-        ? '<button type="button" class="icon-btn" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;" onclick="cycleWatermarkPreview(\'' + key + '\',-1)">' + ICONS.CHEVRON_LEFT + '</button>' +
-          '<button type="button" class="icon-btn" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;" onclick="cycleWatermarkPreview(\'' + key + '\',1)">' + ICONS.CHEVRON_RIGHT + '</button>' +
+        ? '<button type="button" class="icon-btn" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;border-color:transparent;" onclick="cycleWatermarkPreview(\'' + key + '\',-1)">' + ICONS.CHEVRON_LEFT + '</button>' +
+          '<button type="button" class="icon-btn" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;border-color:transparent;" onclick="cycleWatermarkPreview(\'' + key + '\',1)">' + ICONS.CHEVRON_RIGHT + '</button>' +
           '<div style="position:absolute;bottom:8px;left:0;right:0;display:flex;justify-content:center;gap:5px;">' +
             photos.map(function (p, i) { return '<span style="width:6px;height:6px;border-radius:50%;background:' + (i === wmPreviewIndex[key] ? '#fff' : 'rgba(255,255,255,.4)') + ';"></span>'; }).join('') +
           '</div>'
@@ -4420,6 +4462,10 @@
       posStyle = 'left:' + cx + '%;top:' + cy + '%;transform:translate(-50%,-50%);';
     } else if (w.position === 'center') {
       posStyle = 'left:50%;top:50%;transform:translate(-50%,-50%);';
+    } else if (w.position === 'top-left') {
+      posStyle = 'left:12px;top:12px;';
+    } else if (w.position === 'top-right') {
+      posStyle = 'right:12px;top:12px;';
     } else if (w.position === 'bottom-left') {
       posStyle = 'left:12px;bottom:12px;';
     } else {
@@ -4465,18 +4511,14 @@
     const w = WATERMARK_DEFAULTS[key];
     const enabledInput = document.getElementById('wm-' + key + '-enabled');
     const textInput = document.getElementById('wm-' + key + '-text');
-    const modeSelect = document.getElementById('wm-' + key + '-mode');
-    const posSelect = document.getElementById('wm-' + key + '-position');
     const opacityInput = document.getElementById('wm-' + key + '-opacity');
+    // Position and Watermark Type are now the card-button grids above (see
+    // wmPositionBtnHtml/wmTypeBtnHtml + setWatermarkPosition/setWatermarkMode) instead
+    // of <select> dropdowns, since those buttons also show/hide the Logo/Text fields
+    // and need their own "active" highlight updated — simplest to have them trigger a
+    // full re-render of this page rather than patching several things in place here.
     if (enabledInput) enabledInput.addEventListener('change', function () { w.enabled = enabledInput.checked; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
     if (textInput) textInput.addEventListener('input', function () { w.text = textInput.value; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
-    if (modeSelect) modeSelect.addEventListener('change', function () { w.logoMode = modeSelect.value; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
-    if (posSelect) posSelect.addEventListener('change', function () {
-      w.position = posSelect.value;
-      saveWatermarkDefaults();
-      renderWatermarkPreviewOverlay(key);
-      wireWatermarkPreviewDrag(key);
-    });
     if (opacityInput) opacityInput.addEventListener('input', function () {
       w.opacity = Number(opacityInput.value);
       const lbl = document.getElementById('wm-' + key + '-opacity-label');
@@ -4514,8 +4556,10 @@
           '<option value="both"' + (w.logoMode === 'both' ? ' selected' : '') + '>Text + Logo</option>' +
         '</select></div>' +
         '<div class="field"><label>Position</label><select class="input" data-field="watermark.' + key + '.position">' +
-          '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
+          '<option value="top-left"' + (w.position === 'top-left' ? ' selected' : '') + '>top-left</option>' +
+          '<option value="top-right"' + (w.position === 'top-right' ? ' selected' : '') + '>top-right</option>' +
           '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
+          '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
           '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
           '<option value="custom"' + (w.position === 'custom' ? ' selected' : '') + '>Custom</option>' +
         '</select></div>' +
