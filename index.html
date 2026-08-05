@@ -218,6 +218,37 @@
   .wm-pos-btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 700; color: var(--ink); cursor: pointer; text-align: center; }
   .wm-pos-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .wm-pos-btn.wm-type-btn { justify-content: flex-start; padding-left: 14px; width: 100%; }
+
+  /* Update Profile wizard — step pills + progress bar (Company Info / Contact Info /
+     Color Theme / Photos / Social Links / Portfolio), matching Kamero's own profile
+     setup flow instead of one long flat settings form. */
+  .pw-step-pill { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-size: 12.5px; font-weight: 700; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .pw-step-pill .num { width: 20px; height: 20px; border-radius: 50%; background: var(--border); color: var(--ink); display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+  .pw-step-pill.done { color: var(--accent-ink); border-color: var(--accent-soft); background: var(--accent-soft); }
+  .pw-step-pill.done .num { background: var(--accent); color: #fff; }
+  .pw-step-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .pw-step-pill.active .num { background: rgba(255,255,255,.25); color: #fff; }
+  .pw-progress-track { height: 6px; border-radius: 4px; background: var(--border); margin: 14px 0 22px; overflow: hidden; }
+  .pw-progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .2s ease; }
+  .pw-quick-color { width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent; flex-shrink: 0; }
+  .pw-quick-color.active { border-color: var(--ink); }
+
+  /* Live phone preview — a real mirror of the guest app's own Home/gate studio card,
+     rebuilt with the same markup+classes as snapfilmer-original.html's studio card, so
+     it can never silently drift from what guests actually see. */
+  .pw-phone-frame { width: 270px; border-radius: 34px; border: 10px solid #1a1a1a; background: #1a1a1a; box-shadow: 0 24px 60px -20px rgba(0,0,0,.4); flex-shrink: 0; }
+  .pw-phone-screen { background: #F5F1E8; border-radius: 24px; overflow: hidden; min-height: 500px; position: relative; font-family: -apple-system, sans-serif; }
+  .pw-phone-cover { position: relative; width: 100%; aspect-ratio: 16/10; background: #ddd; overflow: hidden; }
+  .pw-phone-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pw-phone-cover .label { position: absolute; top: 10px; left: 12px; color: #fff; font-weight: 800; font-size: 13px; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .pw-phone-cover .badge { position: absolute; bottom: 10px; right: 12px; background: rgba(0,0,0,.5); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .5px; padding: 3px 8px; border-radius: 6px; }
+  .pw-phone-studio { padding: 12px 14px; background: #fff; }
+  .pw-phone-studio .row { display: flex; align-items: center; gap: 8px; }
+  .pw-phone-studio .avatar { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; background: #eee; flex-shrink: 0; }
+  .pw-phone-studio .name { font-weight: 800; font-size: 13.5px; }
+  .pw-phone-studio .bio { font-size: 11px; color: #6b6b6b; margin-top: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .pw-phone-studio .socials { display: flex; gap: 8px; margin-top: 10px; }
+  .pw-phone-studio .socials span { width: 22px; height: 22px; border-radius: 50%; background: #f0eee8; display: flex; align-items: center; justify-content: center; color: #555; }
 </style>
 </head>
 <body>
@@ -256,6 +287,9 @@
     LOCK: icon('<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>'),
     GLOBE: icon('<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>'),
     WHATSAPP: icon('<path d="M12 2a10 10 0 00-8.6 15L2 22l5.2-1.4A10 10 0 1012 2z"/><path d="M8.5 8c.3-.5.6-.5.9-.4.3.1 1 1.6 1 1.9s-.1.4-.3.6c-.2.2-.4.4-.2.7.2.4 1 1.5 2 2.2 1.2.8 1.8 1 2.1 1 .3 0 .5-.1.7-.4.2-.3.6-.7.9-.7.3 0 1.6.6 1.9.7.3.1.5.2.5.4.1.5-.5 1.6-1.6 2-1.1.3-2 .3-4.5-.9C9.5 13.9 7.5 11.5 7.3 11.1c-.2-.4-1.1-1.7-.6-2.7z"/>'),
+    INSTAGRAM: icon('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r=".8"/>'),
+    YOUTUBE: icon('<rect x="2.5" y="5.5" width="19" height="13" rx="4"/><path d="M10.5 9.3l4.5 2.7-4.5 2.7z"/>'),
+    VIMEO: icon('<path d="M22 7c-.2 2-1.7 4.9-4.4 8.6-2.8 3.7-5.2 5.6-7.2 5.6-1.2 0-2.2-1.1-3-3.4L5.3 11c-.5-2-1.1-3-1.7-3-.1 0-.6.3-1.3.8L1.4 7.8C3 6.4 4.6 5 5.7 4.9c1.5-.1 2.4.9 2.8 3 .5 3.2.9 5.2 1.2 6 .6 1.5 1.3 2.2 2 2.2.5 0 1.3-.8 2.3-2.5s1.5-3 1.6-3.9c.1-1.5-.5-2.2-1.7-2.2-.6 0-1.2.1-1.9.4C13.2 4.6 15.1 2.6 18.3 2.5 20.6 2.4 22.2 4.1 22 7z"/>'),
     IMAGE: icon('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.7"/><path d="M21 15l-5-5L5 21"/>'),
     FOLDER: icon('<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>'),
     STAR: icon('<path d="M12 2l3.1 6.3 7 1-5 5 1.2 6.9L12 18l-6.3 3.2L7 14.3l-5-5 7-1z"/>'),
@@ -334,7 +368,7 @@
     plan: 'Growth Plan', creditsUsed: 6400, creditsTotal: 10000,
     renewalDate: '2026-09-01', billingCycle: 'Monthly',
     followCode: 'FA-BXYHLB', originalFiles: 9,
-    logoUrl: '',
+    logoUrl: '', coverUrl: '', subdomain: '', portfolioEventId: '',
   };
 
   // The same 9-tier photo pack real Kamero sells both account-wide (Home page "My
@@ -486,6 +520,22 @@
   // you'd just uploaded into Cam 2 had "moved itself" to Cam 1 a moment later, when
   // really the photo never moved — the view just silently snapped back to album #1.
   let selectedAlbumFilterEventId = null;
+  // Update Profile wizard (Settings page) — which of the 6 steps is showing right now.
+  let profileWizardStep = 'company';
+  const PROFILE_WIZARD_STEPS = [
+    { key: 'company', label: 'Company Info' },
+    { key: 'contact', label: 'Contact Info' },
+    { key: 'color', label: 'Color Theme' },
+    { key: 'photos', label: 'Photos' },
+    { key: 'social', label: 'Social Links' },
+    { key: 'portfolio', label: 'Portfolio' },
+  ];
+  const QUICK_COLORS = [
+    '#4B5D3A', '#E8B84B', '#D0342C', '#E8622C', '#D9932C', '#8A5A2C', '#7BAE3F', '#2C7A3D',
+    '#2C9E8F', '#1F3A5F', '#2C5FA8', '#5B5FD9', '#8B3FAE', '#8A2C4B', '#C22C6B', '#E23A6B',
+    '#8A2C2C', '#5F1F2C', '#4FC3E8', '#1F6B5F', '#B03A3A', '#E8C93A', '#3AAE9E', '#D93A3A',
+    '#F2A6C2', '#A67BE8', '#7B9EE8', '#3A8AE8', '#F2B98A', '#F2D93A', '#E8823A', '#F26B5B',
+  ];
   let dashboardEventPhotos = [];
   let dashboardPhotosUnsub = null;
   let gridSelectMode = false;
@@ -1271,7 +1321,10 @@
   function openCreateEvent() {
     const id = 'evt_new_' + Date.now();
     const newEvent = {
-      id: id, name: 'Untitled Event', date: new Date().toISOString().slice(0, 10), cover: 'https://picsum.photos/seed/' + id + '/300/300',
+      // Uses the studio's own Cover Photo (Profile → Photos) as the starting cover for
+      // a brand-new event, if one's been uploaded — a random picsum placeholder only
+      // when there's genuinely nothing better to show yet.
+      id: id, name: 'Untitled Event', date: new Date().toISOString().slice(0, 10), cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
       photos: 0, photoLimit: 500, guests: 0, views: 0, status: 'active', validUpto: STUDIO.renewalDate,
       albums: [],
       privacy: { faceRecognition: true, facePrivacy: false, anonymousMyPhotos: false, registration: false, guestUpload: false, guestUploadLimit: 10, pin: '', coHosts: [], enquiry: false, disabled: false },
@@ -2341,7 +2394,12 @@
   function downloadLightboxPhoto() {
     const p = lightboxPhotos[lightboxIndex];
     if (!p || !p.dataUrl) return;
-    const filename = 'photo-' + p.id + '.jpg';
+    // Keep the camera's own filename (e.g. "MITU7165.jpg") instead of renaming it to a
+    // generic "photo-<firestore-id>.jpg" — the studio needs the original numbering
+    // intact for their own file organization, editing workflow, and client delivery.
+    // Only falls back to a generic name for the rare doc that predates filenames being
+    // stored at all.
+    const filename = p.filename || ('photo-' + p.id + '.jpg');
     if (p.dataUrl.indexOf('data:') === 0) {
       forceDownloadDataUrl(p.dataUrl, filename);
       return;
@@ -3764,6 +3822,33 @@
     if (db) db.collection('studio').doc('profile').set({ logoUrl: '' }, { merge: true }).catch(showSyncFailureToast);
     const e = EVENTS.find(function (x) { return x.id === currentEventId; }) || EVENTS[0];
     if (e) renderShareTab(e);
+  }
+
+  // Cover Photo — the studio-wide banner (shown on the guest app's Portfolio screen,
+  // and used as the default cover photo for brand-new events instead of a random
+  // placeholder). Unlike the small logo, this can be a proper full-width photo, so it
+  // goes to Firebase Storage (same path pattern as everything else) rather than an
+  // inline Firestore data URL, which has a 1MB doc-size ceiling.
+  function uploadStudioCover(evt) {
+    const file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file || file.type.indexOf('image/') !== 0) return;
+    resizeFileToBlob(file, 1600, 0.85).then(function (blob) {
+      return uploadPhotoToStorage(blob, file.name, 'studio/cover');
+    }).then(function (url) {
+      STUDIO.coverUrl = url;
+      if (db) db.collection('studio').doc('profile').set({ coverUrl: url }, { merge: true }).catch(showSyncFailureToast);
+      renderProfileWizard(document.getElementById('page-content'));
+    }).catch(function () {
+      alert('Could not upload the cover photo — check your connection and try again.');
+    });
+  }
+
+  function removeStudioCover() {
+    if (!confirm('Remove the studio cover photo?')) return;
+    STUDIO.coverUrl = '';
+    if (db) db.collection('studio').doc('profile').set({ coverUrl: '' }, { merge: true }).catch(showSyncFailureToast);
+    renderProfileWizard(document.getElementById('page-content'));
   }
 
   // Builds a real qrserver.com request URL — color/bgcolor are genuine API params (hex,
@@ -5385,36 +5470,72 @@
   }
 
   // ================= Settings =================
+  // ================= Update Profile (6-step wizard) =================
+  // Replaces the old single flat "Studio Profile" form with the same step-by-step
+  // flow Kamero itself uses (Company Info / Contact Info / Color Theme / Photos /
+  // Social Links / Portfolio), plus a live phone preview built from the exact same
+  // markup/classes the guest app's own studio card uses — so it can't silently drift
+  // from what a guest actually sees.
   function renderSettings(el) {
+    renderProfileWizard(el);
+  }
+
+  function profileStepDone(key) {
+    if (key === 'company') return !!STUDIO.name;
+    if (key === 'contact') return !!(STUDIO.phone || STUDIO.email);
+    if (key === 'color') return !!STUDIO.brandColor;
+    if (key === 'photos') return !!(STUDIO.logoUrl || STUDIO.coverUrl);
+    if (key === 'social') return Object.values(STUDIO.social).filter(Boolean).length >= 2;
+    if (key === 'portfolio') return !!STUDIO.portfolioEventId;
+    return false;
+  }
+
+  function setProfileWizardStep(key) {
+    profileWizardStep = key;
+    renderProfileWizard(document.getElementById('page-content'));
+  }
+
+  function renderProfileWizard(el) {
+    const stepIdx = PROFILE_WIZARD_STEPS.findIndex(function (s) { return s.key === profileWizardStep; });
+    const doneCount = PROFILE_WIZARD_STEPS.filter(function (s) { return profileStepDone(s.key); }).length;
+    const pctComplete = Math.round((doneCount / PROFILE_WIZARD_STEPS.length) * 100);
+    const isLast = stepIdx === PROFILE_WIZARD_STEPS.length - 1;
+
     el.innerHTML =
-      '<div class="grid-2">' +
-        '<div class="card">' +
-          '<div class="card-title">Studio Profile</div>' +
-          '<div class="card-sub">Guests see this on your app\'s Home screen — name, bio, brand color and socials.</div>' +
-          '<div class="field"><label>Studio Name</label><input class="input" id="settings-studio-name" value="' + STUDIO.name + '"></div>' +
-          '<div class="field"><label>Email</label><input class="input" id="settings-studio-email" value="' + STUDIO.email + '"></div>' +
-          '<div class="field"><label>Phone</label><input class="input" id="settings-studio-phone" value="' + STUDIO.phone + '"></div>' +
-          '<div class="field"><label>Website</label><input class="input" id="settings-studio-website" value="' + STUDIO.website + '"></div>' +
-          '<div class="field"><label>About your studio</label><textarea class="input" id="settings-studio-about" rows="3" style="resize:vertical;">' + STUDIO.about + '</textarea></div>' +
-          '<div class="field"><label>Brand Color</label><div style="display:flex;gap:10px;align-items:center;">' +
-            '<input type="color" id="settings-studio-color" value="' + STUDIO.brandColor + '" style="width:44px;height:38px;padding:2px;border:1px solid var(--border);border-radius:8px;cursor:pointer;">' +
-            '<input class="input" id="settings-studio-color-hex" value="' + STUDIO.brandColor + '" style="flex:1;">' +
-          '</div></div>' +
-          '<div class="card-title" style="margin-top:6px;font-size:13px;">Social Links</div>' +
-          '<div class="field"><label>Instagram</label><input class="input" id="settings-social-instagram" value="' + STUDIO.social.instagram + '"></div>' +
-          '<div class="field"><label>YouTube</label><input class="input" id="settings-social-youtube" value="' + STUDIO.social.youtube + '"></div>' +
-          '<div class="field"><label>WhatsApp</label><input class="input" id="settings-social-whatsapp" value="' + STUDIO.social.whatsapp + '"></div>' +
-          '<div class="field"><label>Vimeo</label><input class="input" id="settings-social-vimeo" value="' + STUDIO.social.vimeo + '"></div>' +
-          '<button class="btn-solid" id="settings-save-btn" onclick="saveStudioProfile()">Save Profile</button>' +
-        '</div>' +
-        '<div class="card">' +
-          '<div class="card-title">Billing &amp; Credits</div>' +
-          '<div class="card-sub">' + STUDIO.plan + ' &middot; ' + (STUDIO.creditsTotal - STUDIO.creditsUsed).toLocaleString() + ' credits remaining</div>' +
-          '<div class="bar" style="height:8px;"><div class="bar-fill" style="width:' + Math.round((STUDIO.creditsUsed / STUDIO.creditsTotal) * 100) + '%;"></div></div>' +
-          '<div style="display:flex;gap:10px;margin-top:16px;">' +
-            '<button class="btn-solid" style="flex:1;justify-content:center;" onclick="showPage(\'subscription\')">Buy Credits</button>' +
-            '<button class="btn-outline" style="flex:1;justify-content:center;" onclick="showPage(\'subscription\')">Upgrade Plan</button>' +
+      '<h2 style="margin:0 0 4px;">Update Profile</h2>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--muted);margin-bottom:2px;">' +
+        '<span>Step ' + (stepIdx + 1) + ' of ' + PROFILE_WIZARD_STEPS.length + '</span>' +
+        '<span style="font-weight:800;color:var(--accent-ink);">' + pctComplete + '% complete</span>' +
+      '</div>' +
+      '<div class="pw-progress-track"><div class="pw-progress-fill" style="width:' + pctComplete + '%;"></div></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;">' +
+        PROFILE_WIZARD_STEPS.map(function (s, i) {
+          const done = profileStepDone(s.key);
+          const active = s.key === profileWizardStep;
+          const cls = active ? 'active' : (done ? 'done' : '');
+          return '<div class="pw-step-pill' + (cls ? ' ' + cls : '') + '" onclick="setProfileWizardStep(\'' + s.key + '\')">' +
+            '<span class="num">' + (done && !active ? ICONS.CHECK.replace('width="18" height="18"', 'width="11" height="11"') : (i + 1)) + '</span>' + s.label +
+          '</div>';
+        }).join('') +
+      '</div>' +
+      '<div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">' +
+        '<div style="flex:1;min-width:340px;">' +
+          '<div class="card">' + profileWizardStepContent(profileWizardStep) +
+            '<div style="display:flex;gap:10px;margin-top:18px;">' +
+              '<button class="btn-outline" id="pw-save-btn" onclick="saveProfileWizardStep(false)">Save</button>' +
+              (isLast ? '' : '<button class="btn-solid" onclick="saveProfileWizardStep(true)">Save &amp; Next</button>') +
+            '</div>' +
           '</div>' +
+        '</div>' +
+        '<div class="pw-phone-frame"><div class="pw-phone-screen" id="pw-phone-screen"></div></div>' +
+      '</div>' +
+      '<div class="card" style="margin-top:20px;">' +
+        '<div class="card-title">Billing &amp; Credits</div>' +
+        '<div class="card-sub">' + STUDIO.plan + ' &middot; ' + (STUDIO.creditsTotal - STUDIO.creditsUsed).toLocaleString() + ' credits remaining</div>' +
+        '<div class="bar" style="height:8px;"><div class="bar-fill" style="width:' + Math.round((STUDIO.creditsUsed / STUDIO.creditsTotal) * 100) + '%;"></div></div>' +
+        '<div style="display:flex;gap:10px;margin-top:16px;max-width:420px;">' +
+          '<button class="btn-solid" style="flex:1;justify-content:center;" onclick="showPage(\'subscription\')">Buy Credits</button>' +
+          '<button class="btn-outline" style="flex:1;justify-content:center;" onclick="showPage(\'subscription\')">Upgrade Plan</button>' +
         '</div>' +
       '</div>' +
       '<div class="card" style="margin-top:16px;">' +
@@ -5424,16 +5545,8 @@
         toggleRowHtml('Weekly Summary Email', 'A digest of activity across all your events.', NOTIFICATION_PREFS.weeklySummary, 'pref-weekly-summary', '') +
       '</div>';
     fillIcons();
-
-    // Keep the color swatch and hex text field in sync with each other.
-    const colorPicker = document.getElementById('settings-studio-color');
-    const colorHex = document.getElementById('settings-studio-color-hex');
-    if (colorPicker && colorHex) {
-      colorPicker.addEventListener('input', function () { colorHex.value = colorPicker.value; });
-      colorHex.addEventListener('input', function () {
-        if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) colorPicker.value = colorHex.value;
-      });
-    }
+    wireProfileWizardStep(profileWizardStep);
+    renderPhonePreview();
 
     const prefUploads = document.getElementById('pref-new-uploads');
     const prefOrders = document.getElementById('pref-new-orders');
@@ -5443,36 +5556,247 @@
     if (prefWeekly) prefWeekly.addEventListener('change', function () { NOTIFICATION_PREFS.weeklySummary = prefWeekly.checked; saveNotificationPrefs(); });
   }
 
-  function saveStudioProfile() {
-    STUDIO.name = document.getElementById('settings-studio-name').value.trim() || STUDIO.name;
-    STUDIO.email = document.getElementById('settings-studio-email').value.trim() || STUDIO.email;
-    STUDIO.phone = document.getElementById('settings-studio-phone').value.trim() || STUDIO.phone;
-    STUDIO.website = document.getElementById('settings-studio-website').value.trim();
-    STUDIO.about = document.getElementById('settings-studio-about').value.trim();
-    const hex = document.getElementById('settings-studio-color-hex').value.trim();
-    STUDIO.brandColor = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : STUDIO.brandColor;
-    STUDIO.social = {
-      instagram: document.getElementById('settings-social-instagram').value.trim(),
-      youtube: document.getElementById('settings-social-youtube').value.trim(),
-      whatsapp: document.getElementById('settings-social-whatsapp').value.trim(),
-      vimeo: document.getElementById('settings-social-vimeo').value.trim(),
-    };
-    renderSidebar();
+  function profileWizardStepContent(key) {
+    if (key === 'company') {
+      return '<div class="card-title">Company Info</div>' +
+        '<div class="field"><label>Company Name</label><input class="input" id="pw-name" value="' + STUDIO.name + '"></div>' +
+        '<div class="field"><label>Custom subdomain <span style="font-weight:400;color:var(--muted);">(optional)</span></label><input class="input" id="pw-subdomain" placeholder="e.g. mystudio" value="' + STUDIO.subdomain + '"></div>' +
+        '<div class="hint" style="margin-bottom:16px;">Saved for your reference — guest links are still shared from Events &rarr; Share &amp; QR (this build runs on one shared address, not a real per-studio subdomain yet). Your gallery link: ' + GUEST_APP_URL + '?event=&lt;eventid&gt;</div>' +
+        '<div class="field" style="margin-bottom:6px;"><label>About your company</label><textarea class="input" id="pw-about" rows="8" maxlength="1000" style="resize:vertical;">' + STUDIO.about + '</textarea></div>' +
+        '<div style="text-align:right;font-size:11px;color:var(--muted);" id="pw-about-count">' + STUDIO.about.length + ' / 1000</div>';
+    }
+    if (key === 'contact') {
+      return '<div class="card-title">Contact Info</div>' +
+        '<div class="field"><label>Mobile Number</label><input class="input" id="pw-phone" value="' + STUDIO.phone + '"></div>' +
+        '<div class="field"><label>Website Link</label><input class="input" id="pw-website" placeholder="https://" value="' + STUDIO.website + '"></div>' +
+        '<div class="hint" style="margin-top:-10px;margin-bottom:16px;">Don\'t have a website? You can use your Instagram, portfolio, or any other profile link.</div>' +
+        '<div class="field" style="margin-bottom:0;"><label>Email</label><input class="input" id="pw-email" value="' + STUDIO.email + '"></div>';
+    }
+    if (key === 'color') {
+      return '<div class="card-title">Color Theme</div>' +
+        '<div class="card-sub">Used for accents across your dashboard and guest galleries.</div>' +
+        '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Select your Brand Color</label>' +
+        '<div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;">' +
+          '<input type="color" id="pw-color" value="' + STUDIO.brandColor + '" style="width:52px;height:44px;padding:2px;border:1px solid var(--border);border-radius:10px;cursor:pointer;">' +
+          '<input class="input" id="pw-color-hex" value="' + STUDIO.brandColor + '" style="flex:1;">' +
+        '</div>' +
+        '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Quick Colors</label>' +
+        '<div style="display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:0;" id="pw-quick-colors">' +
+          QUICK_COLORS.map(function (c) {
+            return '<button type="button" class="pw-quick-color' + (c.toLowerCase() === STUDIO.brandColor.toLowerCase() ? ' active' : '') + '" style="background:' + c + ';" data-color="' + c + '" title="' + c + '"></button>';
+          }).join('') +
+        '</div>';
+    }
+    if (key === 'photos') {
+      return '<div class="card-title">Photos</div>' +
+        '<div class="grid-2">' +
+          '<div>' +
+            '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Profile Photo</label>' +
+            (STUDIO.logoUrl
+              ? '<img src="' + STUDIO.logoUrl + '" style="width:100%;max-width:180px;aspect-ratio:1;object-fit:cover;border-radius:12px;border:1px solid var(--border);display:block;margin-bottom:10px;">'
+              : '<div style="width:100%;max-width:180px;aspect-ratio:1;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No logo yet</div>') +
+            '<div style="display:flex;gap:8px;">' +
+              '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Change' +
+                '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event);setTimeout(function(){renderProfileWizard(document.getElementById(\'page-content\'));},50);">' +
+              '</label>' +
+              (STUDIO.logoUrl ? '<button class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeStudioLogo();setTimeout(function(){renderProfileWizard(document.getElementById(\'page-content\'));},50);">Remove</button>' : '') +
+            '</div>' +
+            '<div class="hint">Shown as a round photo in your gallery</div>' +
+          '</div>' +
+          '<div>' +
+            '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Cover Photo</label>' +
+            (STUDIO.coverUrl
+              ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;margin-bottom:10px;"><img src="' + STUDIO.coverUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>'
+              : '<div style="width:100%;aspect-ratio:16/10;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No cover yet</div>') +
+            '<div style="display:flex;gap:8px;">' +
+              '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Change' +
+                '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioCover(event)">' +
+              '</label>' +
+              (STUDIO.coverUrl ? '<button class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeStudioCover()">Remove</button>' : '') +
+            '</div>' +
+            '<div class="hint">Displayed as the Portfolio banner, and as the default cover photo for brand-new events</div>' +
+          '</div>' +
+        '</div>';
+    }
+    if (key === 'social') {
+      const filled = Object.values(STUDIO.social).filter(Boolean).length;
+      return '<div class="card-title">Social Media Links</div>' +
+        '<div class="card-sub">Add at least 2 social links to your profile <span data-social-counter style="font-weight:800;color:' + (filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)') + ';">(' + filled + '/2' + (filled >= 2 ? ' &#10003;' : '') + ')</span></div>' +
+        socialRowHtml('instagram', 'INSTAGRAM', 'Instagram', STUDIO.social.instagram) +
+        socialRowHtml('youtube', 'YOUTUBE', 'YouTube', STUDIO.social.youtube) +
+        socialRowHtml('whatsapp', 'WHATSAPP', 'WhatsApp', STUDIO.social.whatsapp) +
+        socialRowHtml('vimeo', 'VIMEO', 'Vimeo', STUDIO.social.vimeo);
+    }
+    if (key === 'portfolio') {
+      return '<div class="card-title">Portfolio Event</div>' +
+        '<div class="card-sub">Your portfolio event showcases your best work — guests browsing your studio before joining a specific event see this one\'s real albums and photos.</div>' +
+        '<div class="field" style="margin-bottom:0;"><label>Portfolio Event</label><select class="input" id="pw-portfolio-event">' +
+          '<option value="">&mdash; None &mdash;</option>' +
+          EVENTS.map(function (e) { return '<option value="' + e.id + '"' + (STUDIO.portfolioEventId === e.id ? ' selected' : '') + '>' + e.name + ' (' + e.id + ')</option>'; }).join('') +
+        '</select></div>' +
+        (EVENTS.length === 0
+          ? '<div class="hint" style="margin-top:10px;background:#FBF3D9;border:1px solid #F0DFA0;border-radius:10px;padding:12px;color:#7A5C00;">No events created yet? Create one first (Events &rarr; Create Event), then come back and pick it here as your showcase.</div>'
+          : '');
+    }
+    return '';
+  }
 
-    // Push straight to Firestore — this is the doc the guest app reads to render its
-    // Home screen studio card (name/about/brand color/socials), so saving here is what
-    // actually makes "Studio Profile drives the guest app" true, not just cosmetic.
+  function socialRowHtml(key, iconName, label, value) {
+    return '<div class="field"><label style="display:flex;align-items:center;gap:8px;">' + ICONS[iconName] + label + '</label>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<input class="input" id="pw-social-' + key + '" placeholder="Link or number" value="' + value + '" style="flex:1;">' +
+        '<button class="icon-mini" id="pw-social-' + key + '-clear" title="Clear" style="' + (value ? '' : 'display:none;') + '" onclick="clearSocialField(\'' + key + '\')"><i data-icon="TRASH"></i></button>' +
+      '</div></div>';
+  }
+
+  function clearSocialField(key) {
+    const input = document.getElementById('pw-social-' + key);
+    if (!input) return;
+    input.value = '';
+    STUDIO.social[key] = '';
+    const clearBtn = document.getElementById('pw-social-' + key + '-clear');
+    if (clearBtn) clearBtn.style.display = 'none';
+    const counter = document.querySelector('.card-sub span[data-social-counter]');
+    if (counter) {
+      const filled = Object.values(STUDIO.social).filter(Boolean).length;
+      counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
+      counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
+    }
+    renderPhonePreview();
+  }
+
+  function wireProfileWizardStep(key) {
+    // Every input mutates STUDIO in-memory immediately (so the phone preview and any
+    // other open tab reading STUDIO stays live/accurate) — the actual Firestore write
+    // only happens on Save/Save & Next, matching the explicit Save button in the UI
+    // instead of silently syncing on every keystroke.
+    function bind(id, apply) {
+      const input = document.getElementById(id);
+      if (!input) return;
+      input.addEventListener('input', function () { apply(input.value); renderPhonePreview(); });
+    }
+    if (key === 'company') {
+      bind('pw-name', function (v) { STUDIO.name = v; });
+      bind('pw-subdomain', function (v) { STUDIO.subdomain = v; });
+      bind('pw-about', function (v) {
+        STUDIO.about = v;
+        const counter = document.getElementById('pw-about-count');
+        if (counter) counter.textContent = v.length + ' / 1000';
+      });
+    }
+    if (key === 'contact') {
+      bind('pw-phone', function (v) { STUDIO.phone = v; });
+      bind('pw-website', function (v) { STUDIO.website = v; });
+      bind('pw-email', function (v) { STUDIO.email = v; });
+    }
+    if (key === 'color') {
+      const colorPicker = document.getElementById('pw-color');
+      const colorHex = document.getElementById('pw-color-hex');
+      if (colorPicker && colorHex) {
+        colorPicker.addEventListener('input', function () {
+          colorHex.value = colorPicker.value;
+          STUDIO.brandColor = colorPicker.value;
+          renderPhonePreview();
+        });
+        colorHex.addEventListener('input', function () {
+          if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) {
+            colorPicker.value = colorHex.value;
+            STUDIO.brandColor = colorHex.value;
+            renderPhonePreview();
+          }
+        });
+      }
+      document.querySelectorAll('#pw-quick-colors [data-color]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          STUDIO.brandColor = btn.dataset.color;
+          document.querySelectorAll('#pw-quick-colors [data-color]').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          if (colorPicker) colorPicker.value = STUDIO.brandColor;
+          if (colorHex) colorHex.value = STUDIO.brandColor;
+          renderPhonePreview();
+        });
+      });
+    }
+    if (key === 'social') {
+      ['instagram', 'youtube', 'whatsapp', 'vimeo'].forEach(function (k) {
+        const input = document.getElementById('pw-social-' + k);
+        const clearBtn = document.getElementById('pw-social-' + k + '-clear');
+        if (input) input.addEventListener('input', function () {
+          STUDIO.social[k] = input.value;
+          // Toggle the clear button + "N/2" counter directly instead of re-rendering
+          // the whole step — a full re-render would rebuild every input and knock
+          // focus out of whichever field the studio is mid-typing in.
+          if (clearBtn) clearBtn.style.display = input.value ? '' : 'none';
+          const counter = document.querySelector('.card-sub span[data-social-counter]');
+          if (counter) {
+            const filled = Object.values(STUDIO.social).filter(Boolean).length;
+            counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
+            counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
+          }
+          renderPhonePreview();
+        });
+      });
+    }
+    if (key === 'portfolio') {
+      const sel = document.getElementById('pw-portfolio-event');
+      if (sel) sel.addEventListener('change', function () { STUDIO.portfolioEventId = sel.value; renderPhonePreview(); });
+    }
+  }
+
+  // Builds the live phone preview from the SAME shape of data (name/logo/cover/about/
+  // social) the guest app's own studio card renders from — a real mirror, not a
+  // separately-hand-maintained mockup that could quietly drift out of sync.
+  function renderPhonePreview() {
+    const screen = document.getElementById('pw-phone-screen');
+    if (!screen) return;
+    const portfolioEvent = STUDIO.portfolioEventId ? EVENTS.find(function (e) { return e.id === STUDIO.portfolioEventId; }) : null;
+    const coverSrc = STUDIO.coverUrl || (portfolioEvent && portfolioEvent.cover) || '';
+    const initials = (STUDIO.name || 'SF').trim().split(/\s+/).map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase();
+    const platforms = [
+      { key: 'instagram', icon: 'INSTAGRAM' }, { key: 'youtube', icon: 'YOUTUBE' },
+      { key: 'whatsapp', icon: 'WHATSAPP' }, { key: 'vimeo', icon: 'VIMEO' },
+    ].filter(function (p) { return STUDIO.social[p.key]; });
+    screen.innerHTML =
+      '<div class="pw-phone-cover">' +
+        (coverSrc ? '<img src="' + coverSrc + '">' : '') +
+        '<span class="label">' + (portfolioEvent ? portfolioEvent.name : 'Event Name') + '</span>' +
+        (STUDIO.portfolioEventId ? '<span class="badge">PORTFOLIO</span>' : '') +
+      '</div>' +
+      '<div class="pw-phone-studio">' +
+        '<div class="row">' +
+          (STUDIO.logoUrl ? '<img class="avatar" src="' + STUDIO.logoUrl + '">' : '<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:' + STUDIO.brandColor + ';">' + initials + '</div>') +
+          '<div class="name">' + (STUDIO.name || 'Your Studio') + '</div>' +
+        '</div>' +
+        '<div class="bio">' + (STUDIO.about || 'Add a short line about your studio in Company Info.') + '</div>' +
+        (platforms.length ? '<div class="socials">' + platforms.map(function (p) { return '<span>' + ICONS[p.icon] + '</span>'; }).join('') + '</div>' : '') +
+      '</div>';
+    fillIcons();
+  }
+
+  function saveProfileWizardStep(advance) {
+    const btn = document.getElementById('pw-save-btn');
+    // Push the whole current STUDIO shape (not just this step's fields) — every field
+    // is already live in memory the moment it's typed (see wireProfileWizardStep), so
+    // this just persists the complete, current picture in one write, same as before.
     if (db) {
       db.collection('studio').doc('profile').set({
         name: STUDIO.name, email: STUDIO.email, phone: STUDIO.phone, website: STUDIO.website,
         about: STUDIO.about, brandColor: STUDIO.brandColor, social: STUDIO.social,
-      }, { merge: true }).catch(function () {});
+        subdomain: STUDIO.subdomain, portfolioEventId: STUDIO.portfolioEventId,
+      }, { merge: true }).catch(showSyncFailureToast);
+    } else {
+      showSyncFailureToast(null);
     }
-
-    const btn = document.getElementById('settings-save-btn');
+    renderSidebar();
     if (btn) {
       btn.textContent = 'Saved ✓';
-      setTimeout(function () { btn.textContent = 'Save Profile'; }, 1200);
+      setTimeout(function () { if (btn) btn.textContent = 'Save'; }, 1200);
+    }
+    if (advance) {
+      const idx = PROFILE_WIZARD_STEPS.findIndex(function (s) { return s.key === profileWizardStep; });
+      if (idx < PROFILE_WIZARD_STEPS.length - 1) setProfileWizardStep(PROFILE_WIZARD_STEPS[idx + 1].key);
+    } else {
+      renderProfileWizard(document.getElementById('page-content'));
     }
   }
 
