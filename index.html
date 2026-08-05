@@ -243,6 +243,7 @@
     CLOSE: icon('<path d="M18 6L6 18M6 6l12 12"/>'),
     MENU: icon('<path d="M3 6h18M3 12h18M3 18h18"/>'),
     CHEVRON_RIGHT: icon('<path d="M9 18l6-6-6-6"/>'),
+    CHEVRON_LEFT: icon('<path d="M15 18l-6-6 6-6"/>'),
     CHEVRON_DOWN: icon('<path d="M6 9l6 6 6-6"/>'),
     WALLET: icon('<path d="M3 7a2 2 0 012-2h13a1 1 0 011 1v3"/><path d="M3 7v11a2 2 0 002 2h14a1 1 0 001-1v-8a1 1 0 00-1-1H8a2 2 0 000 4h11"/>'),
     LOCK: icon('<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>'),
@@ -359,9 +360,14 @@
   // logoMode: 'text' | 'logo' | 'both' — 'logo' uses the same custom logo uploaded
   // once here or on the Share/QR page (STUDIO.logoUrl), so there's a single logo to
   // manage instead of re-uploading it per watermark tier.
+  // customX/customY are only used when position === 'custom' — a free-drag placement
+  // (studio drags the watermark anywhere on the live preview below instead of being
+  // stuck with the 4 fixed corners) stored as a percentage of the photo's width/height,
+  // so it scales correctly to any photo size. Default sits near the bottom-right corner
+  // so switching a tier to "Custom" doesn't make the watermark jump somewhere odd.
   const WATERMARK_DEFAULTS = {
-    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', logoMode: 'text' },
-    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center', logoMode: 'text' },
+    standard: { enabled: true, text: STUDIO.name, opacity: 55, position: 'bottom-right', logoMode: 'text', customX: 88, customY: 88 },
+    original: { enabled: false, text: STUDIO.name, opacity: 80, position: 'center', logoMode: 'text', customX: 88, customY: 88 },
   };
 
   // Every event gets its own copy of these two tiers (so one event's overrides never
@@ -383,7 +389,7 @@
     const w = e.watermark;
     if (w && w.standard && w.original) return; // already the current shape
     e.watermark = !w ? freshEventWatermark() : {
-      standard: { enabled: !!w.enabled, text: w.text || STUDIO.name, opacity: typeof w.opacity === 'number' ? w.opacity : 55, position: w.position || 'bottom-right', logoMode: 'text' },
+      standard: { enabled: !!w.enabled, text: w.text || STUDIO.name, opacity: typeof w.opacity === 'number' ? w.opacity : 55, position: w.position || 'bottom-right', logoMode: 'text', customX: 88, customY: 88 },
       original: Object.assign({}, WATERMARK_DEFAULTS.original),
       dualLogo: !!w.dualLogo,
       sponsorLogoUrl: w.sponsorLogoUrl || '',
@@ -4323,11 +4329,12 @@
           '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
           '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
           '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
+          '<option value="custom"' + (w.position === 'custom' ? ' selected' : '') + '>Custom (drag on preview)</option>' +
         '</select></div>' +
       '</div>' +
       '<div class="field"><label>Watermark Text</label><input class="input" id="wm-' + key + '-text" value="' + w.text + '"></div>' +
       '<div class="field"><label id="wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" id="wm-' + key + '-opacity" value="' + w.opacity + '"></div>' +
-      '<div class="field" style="margin-bottom:0;"><label>Logo (used when Content is set to Logo)</label>' +
+      '<div class="field"><label>Logo (used when Content is set to Logo)</label>' +
         '<div style="display:flex;align-items:center;gap:10px;">' +
           (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo uploaded yet.</span>') +
           '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change Logo' : 'Upload Logo') +
@@ -4336,8 +4343,123 @@
         '</div>' +
         '<div class="hint">This is the same logo used on your Share/QR codes — upload it once, use it everywhere.</div>' +
       '</div>' +
+      '<div class="field" style="margin-bottom:0;"><label>Live Preview' + (w.position === 'custom' ? ' <span style="font-weight:400;color:var(--muted);">— drag the watermark on the photo to place it exactly where you want</span>' : '') + '</label>' +
+        watermarkPreviewHtml(key) +
+      '</div>' +
     '</div>';
   }
+
+  // Real photos from the studio's own events (each event's cover, already a real
+  // uploaded photo) used as sample backgrounds for the watermark preview below —
+  // deliberately not stock/placeholder art, so the preview actually shows how the
+  // watermark will look on this studio's real work. Falls back to a plain gradient
+  // card (with a friendly note) only for a brand-new account with no events yet.
+  function watermarkPreviewPhotos() {
+    const seen = {};
+    const urls = [];
+    EVENTS.forEach(function (e) {
+      if (e.cover && !seen[e.cover] && e.cover.indexOf('picsum.photos') === -1) {
+        seen[e.cover] = true;
+        urls.push(e.cover);
+      }
+    });
+    return urls.slice(0, 6);
+  }
+
+  let wmPreviewIndex = { standard: 0, original: 0 };
+
+  function watermarkPreviewHtml(key) {
+    const photos = watermarkPreviewPhotos();
+    if (wmPreviewIndex[key] >= photos.length) wmPreviewIndex[key] = 0;
+    const hasPhotos = photos.length > 0;
+    const src = hasPhotos ? photos[wmPreviewIndex[key]] : '';
+    return '<div class="wm-live-preview" id="wm-preview-' + key + '" style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;background:var(--bg);' + (hasPhotos ? '' : 'display:flex;align-items:center;justify-content:center;') + '">' +
+      (hasPhotos
+        ? '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">'
+        : '<span class="card-sub" style="margin:0;text-align:center;padding:0 20px;">Upload your first event photo to see a live preview here.</span>') +
+      '<div id="wm-preview-overlay-' + key + '"></div>' +
+      (photos.length > 1
+        ? '<button type="button" class="icon-btn" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;" onclick="cycleWatermarkPreview(\'' + key + '\',-1)">' + ICONS.CHEVRON_LEFT + '</button>' +
+          '<button type="button" class="icon-btn" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.5);color:#fff;" onclick="cycleWatermarkPreview(\'' + key + '\',1)">' + ICONS.CHEVRON_RIGHT + '</button>' +
+          '<div style="position:absolute;bottom:8px;left:0;right:0;display:flex;justify-content:center;gap:5px;">' +
+            photos.map(function (p, i) { return '<span style="width:6px;height:6px;border-radius:50%;background:' + (i === wmPreviewIndex[key] ? '#fff' : 'rgba(255,255,255,.4)') + ';"></span>'; }).join('') +
+          '</div>'
+        : '') +
+    '</div>';
+  }
+
+  function cycleWatermarkPreview(key, delta) {
+    const photos = watermarkPreviewPhotos();
+    if (!photos.length) return;
+    wmPreviewIndex[key] = (wmPreviewIndex[key] + delta + photos.length) % photos.length;
+    const holder = document.getElementById('wm-preview-' + key);
+    if (holder) holder.outerHTML = watermarkPreviewHtml(key);
+    renderWatermarkPreviewOverlay(key);
+    wireWatermarkPreviewDrag(key);
+  }
+
+  // Renders just the watermark overlay on top of whichever preview photo is currently
+  // showing — kept separate from the photo <img> itself so dragging/toggling settings
+  // doesn't have to re-fetch or re-render the photo every time.
+  function renderWatermarkPreviewOverlay(key) {
+    const holder = document.getElementById('wm-preview-overlay-' + key);
+    if (!holder) return;
+    const w = WATERMARK_DEFAULTS[key];
+    if (!w.enabled) { holder.innerHTML = ''; return; }
+    const hasLogo = (w.logoMode === 'logo' || w.logoMode === 'both') && STUDIO.logoUrl;
+    const hasText = w.logoMode !== 'logo' && w.text;
+    if (!hasLogo && !hasText) { holder.innerHTML = ''; return; }
+    let inner = '';
+    if (hasLogo) inner += '<img src="' + STUDIO.logoUrl + '" style="width:32px;height:32px;object-fit:contain;border-radius:6px;display:block;">';
+    if (hasText) inner += '<span style="color:#fff;font-size:13px;font-weight:800;letter-spacing:.3px;background:rgba(0,0,0,.4);padding:5px 10px;border-radius:8px;white-space:nowrap;">' + w.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>';
+    const opacity = Math.max(0, Math.min(100, w.opacity)) / 100;
+    let posStyle;
+    if (w.position === 'custom') {
+      const cx = Math.max(0, Math.min(100, w.customX != null ? w.customX : 88));
+      const cy = Math.max(0, Math.min(100, w.customY != null ? w.customY : 88));
+      posStyle = 'left:' + cx + '%;top:' + cy + '%;transform:translate(-50%,-50%);';
+    } else if (w.position === 'center') {
+      posStyle = 'left:50%;top:50%;transform:translate(-50%,-50%);';
+    } else if (w.position === 'bottom-left') {
+      posStyle = 'left:12px;bottom:12px;';
+    } else {
+      posStyle = 'right:12px;bottom:12px;';
+    }
+    holder.style.cssText = 'position:absolute;display:flex;align-items:center;gap:6px;pointer-events:none;z-index:2;opacity:' + opacity + ';' + posStyle;
+    holder.innerHTML = inner;
+  }
+
+  let wmPreviewDrag = null; // { key } while a drag is in progress
+
+  function wireWatermarkPreviewDrag(key) {
+    const wrap = document.getElementById('wm-preview-' + key);
+    if (!wrap) return;
+    wrap.style.cursor = WATERMARK_DEFAULTS[key].position === 'custom' ? 'crosshair' : 'default';
+    wrap.onpointerdown = function (ev) {
+      if (WATERMARK_DEFAULTS[key].position !== 'custom') return;
+      wmPreviewDrag = { key: key };
+      moveWatermarkPreviewDrag(ev);
+    };
+  }
+
+  function moveWatermarkPreviewDrag(ev) {
+    if (!wmPreviewDrag) return;
+    const wrap = document.getElementById('wm-preview-' + wmPreviewDrag.key);
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((ev.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((ev.clientY - rect.top) / rect.height) * 100));
+    const w = WATERMARK_DEFAULTS[wmPreviewDrag.key];
+    w.customX = x; w.customY = y;
+    renderWatermarkPreviewOverlay(wmPreviewDrag.key);
+  }
+
+  window.addEventListener('pointermove', function (ev) {
+    if (wmPreviewDrag) moveWatermarkPreviewDrag(ev);
+  });
+  window.addEventListener('pointerup', function () {
+    if (wmPreviewDrag) { saveWatermarkDefaults(); wmPreviewDrag = null; }
+  });
 
   function wireWatermarkCard(key) {
     const w = WATERMARK_DEFAULTS[key];
@@ -4346,16 +4468,24 @@
     const modeSelect = document.getElementById('wm-' + key + '-mode');
     const posSelect = document.getElementById('wm-' + key + '-position');
     const opacityInput = document.getElementById('wm-' + key + '-opacity');
-    if (enabledInput) enabledInput.addEventListener('change', function () { w.enabled = enabledInput.checked; saveWatermarkDefaults(); });
-    if (textInput) textInput.addEventListener('input', function () { w.text = textInput.value; saveWatermarkDefaults(); });
-    if (modeSelect) modeSelect.addEventListener('change', function () { w.logoMode = modeSelect.value; saveWatermarkDefaults(); });
-    if (posSelect) posSelect.addEventListener('change', function () { w.position = posSelect.value; saveWatermarkDefaults(); });
+    if (enabledInput) enabledInput.addEventListener('change', function () { w.enabled = enabledInput.checked; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
+    if (textInput) textInput.addEventListener('input', function () { w.text = textInput.value; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
+    if (modeSelect) modeSelect.addEventListener('change', function () { w.logoMode = modeSelect.value; saveWatermarkDefaults(); renderWatermarkPreviewOverlay(key); });
+    if (posSelect) posSelect.addEventListener('change', function () {
+      w.position = posSelect.value;
+      saveWatermarkDefaults();
+      renderWatermarkPreviewOverlay(key);
+      wireWatermarkPreviewDrag(key);
+    });
     if (opacityInput) opacityInput.addEventListener('input', function () {
       w.opacity = Number(opacityInput.value);
       const lbl = document.getElementById('wm-' + key + '-opacity-label');
       if (lbl) lbl.textContent = 'Opacity (' + w.opacity + '%)';
       saveWatermarkDefaults();
+      renderWatermarkPreviewOverlay(key);
     });
+    renderWatermarkPreviewOverlay(key);
+    wireWatermarkPreviewDrag(key);
   }
 
   function renderWatermarkPage(el) {
@@ -4387,10 +4517,12 @@
           '<option value="bottom-right"' + (w.position === 'bottom-right' ? ' selected' : '') + '>bottom-right</option>' +
           '<option value="bottom-left"' + (w.position === 'bottom-left' ? ' selected' : '') + '>bottom-left</option>' +
           '<option value="center"' + (w.position === 'center' ? ' selected' : '') + '>center</option>' +
+          '<option value="custom"' + (w.position === 'custom' ? ' selected' : '') + '>Custom</option>' +
         '</select></div>' +
       '</div>' +
       '<div class="field"><label>Watermark Text</label><input class="input" data-field="watermark.' + key + '.text" value="' + w.text + '"></div>' +
       '<div class="field" style="margin-bottom:0;"><label id="ed-wm-' + key + '-opacity-label">Opacity (' + w.opacity + '%)</label><input class="input" type="range" min="0" max="100" data-field="watermark.' + key + '.opacity" value="' + w.opacity + '"></div>' +
+      (w.position === 'custom' ? '<div class="hint" style="margin-top:8px;">Custom placement is set on the studio-wide Watermark page\'s live preview (drag-to-position there) — this event will use that same spot unless you switch it to one of the fixed corners above.</div>' : '') +
     '</div>';
   }
 
