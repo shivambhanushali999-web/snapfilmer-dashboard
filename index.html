@@ -3834,13 +3834,19 @@
     evt.target.value = '';
     if (!file || file.type.indexOf('image/') !== 0) return;
     resizeFileToBlob(file, 1600, 0.85).then(function (blob) {
-      return uploadPhotoToStorage(blob, file.name, 'studio/cover');
+      // Uses the same 'photos/' prefix as every other upload in this file (album
+      // thumbnails, event photos) instead of a brand-new 'studio/' top-level folder —
+      // the Storage security rules are scoped to 'photos/**', so a path outside that
+      // gets silently permission-denied. This was the actual cause of the "could not
+      // upload" error: not a connection issue, a rules-scoping mismatch.
+      return uploadPhotoToStorage(blob, file.name, 'photos/studio-cover');
     }).then(function (url) {
       STUDIO.coverUrl = url;
       if (db) db.collection('studio').doc('profile').set({ coverUrl: url }, { merge: true }).catch(showSyncFailureToast);
       renderProfileWizard(document.getElementById('page-content'));
-    }).catch(function () {
-      alert('Could not upload the cover photo — check your connection and try again.');
+    }).catch(function (err) {
+      console.error('uploadStudioCover failed', err);
+      alert('Could not upload the cover photo' + (err && err.code ? ' (' + err.code + ')' : '') + '. Please try again.');
     });
   }
 
@@ -5527,7 +5533,11 @@
             '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="pw-phone-frame"><div class="pw-phone-screen" id="pw-phone-screen"></div></div>' +
+        '<div style="flex-shrink:0;">' +
+          '<div class="pw-phone-frame"><iframe id="pw-phone-iframe" src="' + GUEST_APP_URL + '" class="pw-phone-screen" style="border:none;width:100%;height:100%;display:block;" title="Live guest app preview"></iframe></div>' +
+          '<button type="button" class="btn-outline btn-sm" style="width:100%;justify-content:center;margin-top:10px;" onclick="document.getElementById(\'pw-phone-iframe\').src=document.getElementById(\'pw-phone-iframe\').src;">' + ICONS.REFRESH + ' Refresh Preview</button>' +
+          '<div class="hint" style="text-align:center;margin-top:6px;">This is the real guest app — it updates here once you hit Save.</div>' +
+        '</div>' +
       '</div>' +
       '<div class="card" style="margin-top:20px;">' +
         '<div class="card-title">Billing &amp; Credits</div>' +
@@ -5546,7 +5556,6 @@
       '</div>';
     fillIcons();
     wireProfileWizardStep(profileWizardStep);
-    renderPhonePreview();
 
     const prefUploads = document.getElementById('pref-new-uploads');
     const prefOrders = document.getElementById('pref-new-orders');
@@ -5662,18 +5671,28 @@
       counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
       counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
     }
-    renderPhonePreview();
+  }
+
+  // Pushes the whole current STUDIO shape to Firestore — the preview iframe only shows
+  // what's actually saved, so it (deliberately) does not update until the studio hits
+  // Save/Save & Next, not on every keystroke.
+  function persistStudioProfileToCloud() {
+    if (!db) { showSyncFailureToast(null); return; }
+    db.collection('studio').doc('profile').set({
+      name: STUDIO.name, email: STUDIO.email, phone: STUDIO.phone, website: STUDIO.website,
+      about: STUDIO.about, brandColor: STUDIO.brandColor, social: STUDIO.social,
+      subdomain: STUDIO.subdomain, portfolioEventId: STUDIO.portfolioEventId,
+    }, { merge: true }).catch(showSyncFailureToast);
+    renderSidebar();
   }
 
   function wireProfileWizardStep(key) {
-    // Every input mutates STUDIO in-memory immediately (so the phone preview and any
-    // other open tab reading STUDIO stays live/accurate) — the actual Firestore write
-    // only happens on Save/Save & Next, matching the explicit Save button in the UI
-    // instead of silently syncing on every keystroke.
+    // Inputs only mutate STUDIO in-memory as the studio types — the actual Firestore
+    // write (and therefore the iframe preview update) only happens on Save/Save & Next.
     function bind(id, apply) {
       const input = document.getElementById(id);
       if (!input) return;
-      input.addEventListener('input', function () { apply(input.value); renderPhonePreview(); });
+      input.addEventListener('input', function () { apply(input.value); });
     }
     if (key === 'company') {
       bind('pw-name', function (v) { STUDIO.name = v; });
@@ -5696,13 +5715,11 @@
         colorPicker.addEventListener('input', function () {
           colorHex.value = colorPicker.value;
           STUDIO.brandColor = colorPicker.value;
-          renderPhonePreview();
         });
         colorHex.addEventListener('input', function () {
           if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) {
             colorPicker.value = colorHex.value;
             STUDIO.brandColor = colorHex.value;
-            renderPhonePreview();
           }
         });
       }
@@ -5713,7 +5730,6 @@
           btn.classList.add('active');
           if (colorPicker) colorPicker.value = STUDIO.brandColor;
           if (colorHex) colorHex.value = STUDIO.brandColor;
-          renderPhonePreview();
         });
       });
     }
@@ -5733,61 +5749,18 @@
             counter.textContent = '(' + filled + '/2' + (filled >= 2 ? ' ✓' : '') + ')';
             counter.style.color = filled >= 2 ? 'var(--accent-ink)' : 'var(--muted)';
           }
-          renderPhonePreview();
         });
       });
     }
     if (key === 'portfolio') {
       const sel = document.getElementById('pw-portfolio-event');
-      if (sel) sel.addEventListener('change', function () { STUDIO.portfolioEventId = sel.value; renderPhonePreview(); });
+      if (sel) sel.addEventListener('change', function () { STUDIO.portfolioEventId = sel.value; });
     }
-  }
-
-  // Builds the live phone preview from the SAME shape of data (name/logo/cover/about/
-  // social) the guest app's own studio card renders from — a real mirror, not a
-  // separately-hand-maintained mockup that could quietly drift out of sync.
-  function renderPhonePreview() {
-    const screen = document.getElementById('pw-phone-screen');
-    if (!screen) return;
-    const portfolioEvent = STUDIO.portfolioEventId ? EVENTS.find(function (e) { return e.id === STUDIO.portfolioEventId; }) : null;
-    const coverSrc = STUDIO.coverUrl || (portfolioEvent && portfolioEvent.cover) || '';
-    const initials = (STUDIO.name || 'SF').trim().split(/\s+/).map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase();
-    const platforms = [
-      { key: 'instagram', icon: 'INSTAGRAM' }, { key: 'youtube', icon: 'YOUTUBE' },
-      { key: 'whatsapp', icon: 'WHATSAPP' }, { key: 'vimeo', icon: 'VIMEO' },
-    ].filter(function (p) { return STUDIO.social[p.key]; });
-    screen.innerHTML =
-      '<div class="pw-phone-cover">' +
-        (coverSrc ? '<img src="' + coverSrc + '">' : '') +
-        '<span class="label">' + (portfolioEvent ? portfolioEvent.name : 'Event Name') + '</span>' +
-        (STUDIO.portfolioEventId ? '<span class="badge">PORTFOLIO</span>' : '') +
-      '</div>' +
-      '<div class="pw-phone-studio">' +
-        '<div class="row">' +
-          (STUDIO.logoUrl ? '<img class="avatar" src="' + STUDIO.logoUrl + '">' : '<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:' + STUDIO.brandColor + ';">' + initials + '</div>') +
-          '<div class="name">' + (STUDIO.name || 'Your Studio') + '</div>' +
-        '</div>' +
-        '<div class="bio">' + (STUDIO.about || 'Add a short line about your studio in Company Info.') + '</div>' +
-        (platforms.length ? '<div class="socials">' + platforms.map(function (p) { return '<span>' + ICONS[p.icon] + '</span>'; }).join('') + '</div>' : '') +
-      '</div>';
-    fillIcons();
   }
 
   function saveProfileWizardStep(advance) {
     const btn = document.getElementById('pw-save-btn');
-    // Push the whole current STUDIO shape (not just this step's fields) — every field
-    // is already live in memory the moment it's typed (see wireProfileWizardStep), so
-    // this just persists the complete, current picture in one write, same as before.
-    if (db) {
-      db.collection('studio').doc('profile').set({
-        name: STUDIO.name, email: STUDIO.email, phone: STUDIO.phone, website: STUDIO.website,
-        about: STUDIO.about, brandColor: STUDIO.brandColor, social: STUDIO.social,
-        subdomain: STUDIO.subdomain, portfolioEventId: STUDIO.portfolioEventId,
-      }, { merge: true }).catch(showSyncFailureToast);
-    } else {
-      showSyncFailureToast(null);
-    }
-    renderSidebar();
+    persistStudioProfileToCloud();
     if (btn) {
       btn.textContent = 'Saved ✓';
       setTimeout(function () { if (btn) btn.textContent = 'Save'; }, 1200);
