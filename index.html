@@ -907,6 +907,11 @@
       { id: 'posts', label: 'Posts', icon: 'POSTS' },
       { id: 'watermark', label: 'Watermark', icon: 'DROPLET' },
       { id: 'analytics', label: 'Analytics', icon: 'CHART' },
+      // Studio-wide leads across every event, one place — previously this only existed
+      // as a per-event button inside Event Settings, meaning checking for new enquiries
+      // meant opening each event one at a time. Reuses the same live ALL_ENQUIRIES_DASH
+      // data the topbar bell badge already tracks (see startEnquiriesBadgeSync()).
+      { id: 'enquiries', label: 'Enquiries', icon: 'BELL' },
     ]},
     { style: 'text', items: [
       { id: 'settings', label: 'Profile', icon: 'USERS' },
@@ -1061,12 +1066,53 @@
     }
   }
 
+  // Studio-wide Enquiries page (top nav) — every lead across every event in one list,
+  // instead of having to open each event's own Enquiries panel one at a time to check.
+  // Reuses the same live ALL_ENQUIRIES_DASH data the topbar badge tracks; the per-event
+  // Enquiries panel inside Event Settings still exists too, for when the studio wants to
+  // see just one event's leads specifically.
+  function renderEnquiriesPage(el) {
+    // Opening this page is the real "I looked at these" signal — clears the bell badge,
+    // same as actually reading the alert from showTopbarNotifications() does.
+    try { localStorage.setItem('sf_dash_enquiries_seen', String(Date.now())); } catch (err) {}
+    updateTopbarNotifBadge();
+
+    const rows = ALL_ENQUIRIES_DASH.slice().sort(function (a, b) {
+      const at = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+      const bt = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+      return bt - at;
+    });
+
+    if (!rows.length) {
+      el.innerHTML = '<div class="card" style="text-align:center;padding:48px 24px;">' +
+        '<div style="width:52px;height:52px;border-radius:14px;background:var(--accent-soft);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">' + ICONS.BELL + '</div>' +
+        '<div style="font-weight:800;font-size:15px;margin-bottom:6px;">No enquiries yet</div>' +
+        '<div class="card-sub" style="max-width:380px;margin:0 auto;">Leads submitted from any event\'s "Interested in booking us?" form will show up here — across every event, no need to open each one. Make sure "Enquiry / Lead Capture Form" is turned on per-event in Settings &gt; Privacy &amp; Access.</div>' +
+        '</div>';
+      return;
+    }
+
+    el.innerHTML = '<div class="card"><div class="card-title">Enquiries</div>' +
+      '<div class="card-sub">Every lead submitted across all your events, newest first.</div>' +
+      '<div class="table-card" style="margin-top:14px;"><table><thead><tr><th>Event</th><th>Name</th><th>Contact</th><th>Message</th><th>Received</th></tr></thead><tbody>' +
+      rows.map(function (d) {
+        const ev = EVENTS.find(function (e) { return e.id === d.eventId; });
+        const when = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toLocaleString() : '—';
+        return '<tr><td>' + escapeHtmlGD(ev ? ev.name : (d.eventId || '—')) + '</td>' +
+          '<td>' + escapeHtmlGD(d.name || '—') + '</td>' +
+          '<td>' + escapeHtmlGD(d.email || '—') + (d.phone ? '<br>' + escapeHtmlGD(d.phone) : '') + '</td>' +
+          '<td style="max-width:260px;">' + escapeHtmlGD(d.message || '—') + '</td>' +
+          '<td style="white-space:nowrap;">' + when + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+  }
+
   const PAGE_TITLES = {
     overview: 'Overview', events: 'Events', 'event-detail': 'Event Settings', upload: 'Upload Photos',
     kamsync: 'Kam-Sync', share: 'Share & QR', commonqr: 'Common QR', posts: 'Posts', watermark: 'Watermark', tickets: 'Support Tickets', sell: 'Sell Photos', analytics: 'Analytics', subscription: 'Subscription', settings: 'Settings',
     wallet: 'Wallet & Commission Ledger', usagereport: 'Usage Report',
     sellerdash: 'Seller Dashboard', sellsettings: 'Sell Photos Settings', bizsettings: 'Business Settings', sellwatermark: 'Standard Watermark', sellwizard: 'Create Sell Photos Event',
     createevent: 'Create Event',
+    enquiries: 'Enquiries',
   };
 
   function showPage(name, param) {
@@ -1083,6 +1129,7 @@
       wallet: renderWalletLedger, usagereport: renderUsageReport,
       sellerdash: renderSellerDashboard, sellsettings: renderSellSettings, bizsettings: renderBusinessSettings, sellwatermark: renderSellWatermarkEditor, sellwizard: renderSellWizard,
       createevent: renderCreateEventWizard,
+      enquiries: renderEnquiriesPage,
     };
     const renderer = renderers[name];
     if (renderer) renderer(el);
