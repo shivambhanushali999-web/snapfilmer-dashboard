@@ -120,6 +120,9 @@
   .search-box { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 0 12px; height: 36px; width: 220px; color: var(--muted); }
   .search-box input { border: none; outline: none; background: none; font-size: 13px; flex: 1; color: var(--ink); }
   .icon-btn { width: 36px; height: 36px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink); flex-shrink: 0; }
+  /* Red count badge on the topbar bell — shows new enquiries since this was last opened
+     (see startEnquiriesBadgeSync()/updateTopbarNotifBadge() in the script below). */
+  .notif-badge { position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px; background: #FF4747; color: #fff; font-size: 10px; font-weight: 800; align-items: center; justify-content: center; border: 2px solid var(--bg); box-sizing: border-box; }
   .avatar { width: 36px; height: 36px; border-radius: 12px; background: var(--ink); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0; }
 
   .content { flex: 1; padding: 26px 28px 60px; overflow-y: auto; }
@@ -748,6 +751,7 @@
         startEventsSync();
         startPostsAdminSync();
         startTicketsSync();
+        startEnquiriesBadgeSync();
       });
     });
   } else {
@@ -922,7 +926,7 @@
           '<div class="page-title" id="page-title">Overview</div>' +
           '<div class="topbar-right">' +
             '<div class="search-box"><i data-icon="SEARCH"></i><input placeholder="Search events, photos..."></div>' +
-            '<button class="icon-btn" onclick="showTopbarNotifications()"><i data-icon="BELL"></i></button>' +
+            '<button class="icon-btn" style="position:relative;" onclick="showTopbarNotifications()"><i data-icon="BELL"></i><span class="notif-badge" id="topbar-notif-badge" style="display:none;"></span></button>' +
             '<div style="position:relative;">' +
               '<div class="avatar" title="Account" style="cursor:pointer;" onclick="toggleAccountMenu()">SF</div>' +
               '<div class="account-menu" id="account-menu" style="display:none;"></div>' +
@@ -1004,8 +1008,9 @@
     fillIcons();
   }
 
-  // Real notifications (new orders, tickets, syncing cameras) derived from data that's
-  // already live in the dashboard, rather than a separate hardcoded notifications list.
+  // Real notifications (new orders, tickets, syncing cameras, new enquiries) derived from
+  // data that's already live in the dashboard, rather than a separate hardcoded
+  // notifications list.
   function showTopbarNotifications() {
     const lines = [];
     const openTickets = TICKETS_ADMIN.filter(function (t) { return t.status !== 'resolved'; }).length;
@@ -1013,7 +1018,47 @@
     if (SALES.recentOrders.length) lines.push(SALES.recentOrders.length + ' recent order' + (SALES.recentOrders.length > 1 ? 's' : ''));
     const syncing = KAMSYNC_ACCOUNTS.filter(function (k) { return k.status === 'syncing'; }).length;
     if (syncing) lines.push(syncing + ' camera' + (syncing > 1 ? 's' : '') + ' currently syncing');
+    if (ALL_ENQUIRIES_DASH.length) {
+      lines.push(ALL_ENQUIRIES_DASH.length + ' total enquir' + (ALL_ENQUIRIES_DASH.length > 1 ? 'ies' : 'y') + ' across all events — see each event\'s Enquiries panel.');
+    }
     alert(lines.length ? lines.join('\n') : 'No new notifications.');
+    // Opening this is treated as "seen" — clears the new-enquiry badge on the bell.
+    try { localStorage.setItem('sf_dash_enquiries_seen', String(Date.now())); } catch (err) {}
+    updateTopbarNotifBadge();
+  }
+
+  // ================= Enquiries badge (topbar bell) =================
+  // Studio-wide (not per-event) live count of new leads submitted through any event's
+  // "Interested in booking us?" form — a red badge on the bell so a new enquiry doesn't
+  // just silently sit in Firestore until someone happens to open an event's Enquiries
+  // panel. "New" is tracked client-side (sf_dash_enquiries_seen in localStorage) rather
+  // than a per-doc read flag in Firestore, since there's only ever one studio owner using
+  // this dashboard — no need for real per-user read-state.
+  let ALL_ENQUIRIES_DASH = [];
+  let enquiriesBadgeUnsub;
+  function startEnquiriesBadgeSync() {
+    if (!db || enquiriesBadgeUnsub) return;
+    enquiriesBadgeUnsub = db.collection('enquiries').onSnapshot(function (snap) {
+      ALL_ENQUIRIES_DASH = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      updateTopbarNotifBadge();
+    }, function () {});
+  }
+
+  function updateTopbarNotifBadge() {
+    const badge = document.getElementById('topbar-notif-badge');
+    if (!badge) return;
+    let lastSeen = 0;
+    try { lastSeen = Number(localStorage.getItem('sf_dash_enquiries_seen') || 0); } catch (err) {}
+    const unseen = ALL_ENQUIRIES_DASH.filter(function (d) {
+      const t = d.createdAt && d.createdAt.toMillis ? d.createdAt.toMillis() : 0;
+      return t > lastSeen;
+    }).length;
+    if (unseen > 0) {
+      badge.textContent = unseen > 9 ? '9+' : String(unseen);
+      badge.style.display = 'flex';
+    } else {
+      badge.style.display = 'none';
+    }
   }
 
   const PAGE_TITLES = {
@@ -3470,10 +3515,12 @@
       const btn = document.getElementById('guests-download-btn');
       if (!body) return;
       if (!GUEST_REGISTRATIONS.length) {
+        const isOff = !(e && e.privacy && e.privacy.registration);
         body.innerHTML = '<div class="empty-note">' +
-          (e && e.privacy && e.privacy.registration
-            ? 'No one has registered yet — this fills in as guests enter their details.'
-            : 'Guest Registration is off for this event, so no name/phone/email is being collected. Turn it on in Privacy &amp; Access to start collecting this.') +
+          (isOff
+            ? 'Guest Registration is off for this event, so no name/phone/email is being collected. Turn it on in Privacy &amp; Access to start collecting this.'
+            : 'No one has registered yet — this fills in as guests enter their details.') +
+          (isOff ? '<div style="margin-top:12px;"><button class="btn-outline btn-sm" onclick="openEventSettings()">' + ICONS.SETTINGS + ' Go to Privacy &amp; Access</button></div>' : '') +
           '</div>';
         return;
       }
