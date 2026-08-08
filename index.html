@@ -4250,10 +4250,15 @@
   // Builds a real qrserver.com request URL — color/bgcolor are genuine API params (hex,
   // no '#'), not decorative; format defaults to png but 'svg' is used for the vector
   // download, which can't carry the canvas-composited logo (see composeQrWithLogo below).
+  // ecc=H (highest error-correction level, ~30% of the code can be damaged/obscured and
+  // still scan) is required here, not optional — without it (qrserver.com's default is
+  // much lower), baking a logo into the center covers enough of the code that phone
+  // cameras simply fail to read it at all, which is exactly what "scan karne par kuch
+  // nahi hota" was — the QR images looked fine but were silently unscannable.
   function qrApiUrl(data, color, size, format) {
     return 'https://api.qrserver.com/v1/create-qr-code/?size=' + size + 'x' + size +
       '&data=' + encodeURIComponent(data) + '&color=' + (color || '000000').replace('#', '') +
-      '&bgcolor=FFFFFF' + (format ? '&format=' + format : '');
+      '&bgcolor=FFFFFF&ecc=H' + (format ? '&format=' + format : '');
   }
 
   // The free qrserver.com QR generator has no logo-embedding option of its own, so this
@@ -4583,13 +4588,13 @@
           '<div style="font-weight:800;font-size:14px;">' + q.name + '</div>' +
           '<div style="color:var(--muted);font-size:12px;margin-top:2px;">Currently points to: ' + (ev ? ev.name : 'No event') + '</div>' +
           '<div style="width:150px;height:150px;margin:14px auto;background:#fff;border:1px solid var(--border);border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">' +
-            '<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url) + '" alt="Common QR" style="width:140px;height:140px;">' +
+            '<img src="' + qrApiUrl(url, '000000', 220) + '" alt="Common QR" style="width:140px;height:140px;">' +
           '</div>' +
           '<div class="field"><label>Re-point to Event</label><select class="input" data-repoint="' + q.id + '">' +
             EVENTS.map(function (e) { return '<option value="' + e.id + '"' + (e.id === q.eventId ? ' selected' : '') + '>' + e.name + '</option>'; }).join('') +
           '</select></div>' +
           '<div style="display:flex;gap:8px;margin-top:8px;">' +
-            '<a class="btn-outline btn-sm" style="flex:1;justify-content:center;text-decoration:none;" href="https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=' + encodeURIComponent(url) + '" download="common-qr-' + q.id + '.png" target="_blank">' + ICONS.DOWNLOAD + ' Download</a>' +
+            '<a class="btn-outline btn-sm" style="flex:1;justify-content:center;text-decoration:none;" href="' + qrApiUrl(url, '000000', 600) + '" download="common-qr-' + q.id + '.png" target="_blank">' + ICONS.DOWNLOAD + ' Download</a>' +
             '<button class="icon-mini" data-del-cqr="' + q.id + '"><i data-icon="TRASH"></i></button>' +
           '</div>';
         card.querySelector('[data-repoint]').addEventListener('change', function (ev2) {
