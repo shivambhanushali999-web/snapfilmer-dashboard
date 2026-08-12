@@ -384,6 +384,10 @@
     renewalDate: '2026-09-01', billingCycle: 'Monthly',
     followCode: 'FA-BXYHLB', originalFiles: 9,
     logoUrl: '', coverUrl: '', subdomain: '', portfolioEventId: '',
+    // Optional background track mixed into a guest's "Create My Reel" video (guest app,
+    // My Photos) — we can't legally bundle real music ourselves, so a reel is silent
+    // until the studio uploads one they're licensed to use. See uploadReelMusic() below.
+    reelMusicUrl: '',
     // Discrete, one-off purchased packs — separate from creditsTotal (the shared
     // subscription pool). Each is a standalone unit with its own 12-month validity;
     // "Create Event from Purchased Pack" consumes exactly one of these per event.
@@ -4341,6 +4345,35 @@
     renderProfileWizard(document.getElementById('page-content'));
   }
 
+  // Guest Reels background music — an audio file, not an image, so this skips
+  // resizeFileToBlob() (image-only) and uploads the raw file straight through, still via
+  // the same 'photos/' prefix as everything else (Storage rules are scoped to
+  // 'photos/**' — anything outside that gets silently permission-denied, same fix as
+  // uploadStudioCover() above needed). Capped at 8MB so a guest's reel render never has
+  // to stream down something huge just for a ~15-25 second background clip.
+  function uploadReelMusic(evt) {
+    const file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file) return;
+    if (file.type.indexOf('audio/') !== 0) { alert('Please choose an audio file (MP3, M4A, etc.).'); return; }
+    if (file.size > 8 * 1024 * 1024) { alert('That file is too big — please use something under 8MB (a short 15-25 second clip is plenty).'); return; }
+    uploadPhotoToStorage(file, file.name, 'photos/studio-reel-music').then(function (url) {
+      STUDIO.reelMusicUrl = url;
+      if (db) db.collection('studio').doc('profile').set({ reelMusicUrl: url }, { merge: true }).catch(showSyncFailureToast);
+      renderProfileWizard(document.getElementById('page-content'));
+    }).catch(function (err) {
+      console.error('uploadReelMusic failed', err);
+      alert('Could not upload the track' + (err && err.code ? ' (' + err.code + ')' : '') + '. Please try again.');
+    });
+  }
+
+  function removeReelMusic() {
+    if (!confirm('Remove the background music from Guest Reels? New reels will be silent until another track is added.')) return;
+    STUDIO.reelMusicUrl = '';
+    if (db) db.collection('studio').doc('profile').set({ reelMusicUrl: '' }, { merge: true }).catch(showSyncFailureToast);
+    renderProfileWizard(document.getElementById('page-content'));
+  }
+
   // Builds a real qrserver.com request URL — color/bgcolor are genuine API params (hex,
   // no '#'), not decorative; format defaults to png but 'svg' is used for the vector
   // download, which can't carry the canvas-composited logo (see composeQrWithLogo below).
@@ -6042,6 +6075,19 @@
         toggleRowHtml('New Guest Uploads', 'Get notified when a guest uploads a photo.', NOTIFICATION_PREFS.newGuestUploads, 'pref-new-uploads', '') +
         toggleRowHtml('New Orders', 'Get notified when someone buys a photo.', NOTIFICATION_PREFS.newOrders, 'pref-new-orders', '') +
         toggleRowHtml('Weekly Summary Email', 'A digest of activity across all your events.', NOTIFICATION_PREFS.weeklySummary, 'pref-weekly-summary', '') +
+      '</div>' +
+      '<div class="card" style="margin-top:16px;">' +
+        '<div class="card-title">Guest Reels</div>' +
+        '<div class="card-sub">Background music for the "Create My Reel" feature in the guest app (My Photos) — every guest\'s auto-generated highlight video uses this same track. We can\'t bundle real music ourselves for licensing reasons, so reels stay silent until you add one you\'re licensed to use (royalty-free or one you own the rights to).</div>' +
+        (STUDIO.reelMusicUrl
+          ? '<div style="display:flex;align-items:center;gap:10px;margin:14px 0;padding:10px 12px;background:var(--bg);border-radius:10px;">' +
+              '<audio controls src="' + STUDIO.reelMusicUrl + '" style="flex:1;height:32px;"></audio>' +
+            '</div>' +
+            '<div style="display:flex;gap:10px;">' +
+              '<label class="btn-outline btn-sm">Replace Track<input type="file" accept="audio/*" style="display:none" onchange="uploadReelMusic(event)"></label>' +
+              '<button class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeReelMusic()">Remove</button>' +
+            '</div>'
+          : '<label class="btn-outline btn-sm" style="margin-top:12px;">Upload Track<input type="file" accept="audio/*" style="display:none" onchange="uploadReelMusic(event)"></label>') +
       '</div>';
     fillIcons();
     wireProfileWizardStep(profileWizardStep);
