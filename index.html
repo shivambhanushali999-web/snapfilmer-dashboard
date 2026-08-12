@@ -4345,26 +4345,35 @@
     renderProfileWizard(document.getElementById('page-content'));
   }
 
-  // Guest Reels background music — an audio file, not an image, so this skips
-  // resizeFileToBlob() (image-only) and uploads the raw file straight through, still via
-  // the same 'photos/' prefix as everything else (Storage rules are scoped to
-  // 'photos/**' — anything outside that gets silently permission-denied, same fix as
-  // uploadStudioCover() above needed). Capped at 8MB so a guest's reel render never has
-  // to stream down something huge just for a ~15-25 second background clip.
+  // Guest Reels background music — deliberately stored as an inline base64 data URL on
+  // the studio/profile doc (like the small logo above), NOT uploaded to Firebase
+  // Storage like the cover photo. This isn't just a style choice: a Storage download URL
+  // is cross-origin from the guest app's own domain, and the guest app's canvas/
+  // MediaRecorder pipeline has to load it with crossOrigin="anonymous" to be able to
+  // actually capture its audio into the recorded video — which silently fails (loads/
+  // plays fine for the studio here, but produces a track with NO audio in the guest's
+  // recording) unless the Storage bucket's CORS is separately configured, which nothing
+  // in this app does. A data: URL has no origin at all, so that whole class of failure
+  // disappears — this was the actual cause of "music nahi aaya". Kept small (700KB raw,
+  // ~930KB once base64-encoded) since it shares Firestore's 1MB doc-size ceiling with
+  // every other Profile field — plenty for a compressed 15-25s clip.
   function uploadReelMusic(evt) {
     const file = evt.target.files && evt.target.files[0];
     evt.target.value = '';
     if (!file) return;
     if (file.type.indexOf('audio/') !== 0) { alert('Please choose an audio file (MP3, M4A, etc.).'); return; }
-    if (file.size > 8 * 1024 * 1024) { alert('That file is too big — please use something under 8MB (a short 15-25 second clip is plenty).'); return; }
-    uploadPhotoToStorage(file, file.name, 'photos/studio-reel-music').then(function (url) {
-      STUDIO.reelMusicUrl = url;
-      if (db) db.collection('studio').doc('profile').set({ reelMusicUrl: url }, { merge: true }).catch(showSyncFailureToast);
+    if (file.size > 700 * 1024) { alert('That file is too big — please use something under 700KB (a short, compressed 15-25 second MP3 clip is plenty, and keeps things fast for guests).'); return; }
+    const reader = new FileReader();
+    reader.onload = function () {
+      const dataUrl = reader.result;
+      STUDIO.reelMusicUrl = dataUrl;
+      if (db) db.collection('studio').doc('profile').set({ reelMusicUrl: dataUrl }, { merge: true }).catch(showSyncFailureToast);
       renderProfileWizard(document.getElementById('page-content'));
-    }).catch(function (err) {
-      console.error('uploadReelMusic failed', err);
-      alert('Could not upload the track' + (err && err.code ? ' (' + err.code + ')' : '') + '. Please try again.');
-    });
+    };
+    reader.onerror = function () {
+      alert('Could not read that file — please try again.');
+    };
+    reader.readAsDataURL(file);
   }
 
   function removeReelMusic() {
