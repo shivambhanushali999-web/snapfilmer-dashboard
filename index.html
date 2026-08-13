@@ -1758,7 +1758,7 @@
     // plan's currently unused upload-credit pool, not a flat made-up number.
     const creditsLeft = Math.max(0, STUDIO.creditsTotal - STUDIO.creditsUsed);
     const newEvent = {
-      id: id, name: d.name.trim(), date: d.date, category: d.category,
+      id: id, name: d.name.trim(), date: d.date, category: d.category, venue: '',
       cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
       photos: 0, photoLimit: creditsLeft, guests: 0, views: 0, status: 'active', validUpto: STUDIO.renewalDate,
       albums: [], hosts: validHosts,
@@ -1804,7 +1804,7 @@
     // completely independent of the studio's subscription cycle — and that pack gets
     // marked used immediately so it can't also be handed to a second event.
     const newEvent = {
-      id: id, name: d.name.trim(), date: d.date, category: d.category,
+      id: id, name: d.name.trim(), date: d.date, category: d.category, venue: '',
       cover: STUDIO.coverUrl || ('https://picsum.photos/seed/' + id + '/300/300'),
       photos: 0, photoLimit: pack.photos, guests: 0, views: 0, status: 'active',
       validUpto: addMonthsToDate(pack.purchasedAt, 12),
@@ -2061,6 +2061,7 @@
             '<div class="card-title">Event Details</div>' +
             '<div class="field"><label>Event Name</label><input class="input" id="ed-name" value="' + e.name + '"></div>' +
             '<div class="field"><label>Event Date</label><input class="input" type="date" id="ed-date" value="' + e.date + '"></div>' +
+            '<div class="field"><label>Venue</label><input class="input" id="ed-venue" placeholder="e.g. The Grand Ballroom, Mumbai" value="' + (e.venue || '') + '"></div>' +
             '<div class="field"><label>Event URL</label><div style="display:flex;gap:8px;"><input class="input" readonly value="' + GUEST_APP_URL + '?event=' + e.id + '"><button class="btn-outline btn-sm" onclick="copyText(\'' + GUEST_APP_URL + '?event=' + e.id + '\')">Copy</button></div></div>' +
             '<button class="btn-solid" id="ed-save-btn" onclick="saveEventGeneral()">Save Changes</button>' +
           '</div>' +
@@ -3875,14 +3876,17 @@
     if (!e) return;
     const nameInput = document.getElementById('ed-name');
     const dateInput = document.getElementById('ed-date');
+    const venueInput = document.getElementById('ed-venue');
     const name = nameInput ? nameInput.value.trim() : '';
     const date = dateInput ? dateInput.value : '';
+    const venue = venueInput ? venueInput.value.trim() : '';
     if (name) e.name = name;
     if (date) e.date = date;
+    e.venue = venue;
     // The guest app now loads name/date straight from this Firestore doc (see
     // GUEST_APP_URL + ?event= handling), so this has to actually sync, not just
-    // update the local dashboard copy.
-    syncEventPrivacyToCloud(e.id, { name: e.name, date: e.date });
+    // update the local dashboard copy. Venue feeds the guest app's Event Info screen.
+    syncEventPrivacyToCloud(e.id, { name: e.name, date: e.date, venue: e.venue });
     const btn = document.getElementById('ed-save-btn');
     if (btn) {
       const original = btn.textContent;
