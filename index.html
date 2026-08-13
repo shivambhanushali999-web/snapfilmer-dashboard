@@ -4968,6 +4968,12 @@
         '<div class="card-title">' + (existing ? 'Edit Post' : 'New Post') + '</div>' +
         '<div class="field"><label>Title</label><input class="input" id="post-title-input" placeholder="e.g. Your gallery is now live!" value="' + (existing ? existing.title : '') + '"></div>' +
         '<div class="field"><label>Message</label><textarea class="input" id="post-body-input" rows="4" placeholder="Write your update...">' + (existing ? existing.body : '') + '</textarea></div>' +
+        '<div class="field"><label>Type</label><select class="input" id="post-type-select">' +
+          ['announcement', 'update', 'event'].map(function (t) {
+            const label = t === 'announcement' ? 'Announcement' : (t === 'event' ? 'Event' : 'Update');
+            return '<option value="' + t + '"' + ((existing ? (existing.type || 'update') : 'update') === t ? ' selected' : '') + '>' + label + '</option>';
+          }).join('') +
+        '</select></div>' +
         '<div class="field"><label>Audience</label><select class="input" id="post-audience-select">' +
           '<option value="all">All Guests (every event)</option>' +
           EVENTS.map(function (e) { return '<option value="' + e.id + '"' + (existing && existing.audience === e.id ? ' selected' : '') + '>' + e.name + ' only</option>'; }).join('') +
@@ -4982,14 +4988,16 @@
   function createPost() {
     const titleInput = document.getElementById('post-title-input');
     const bodyInput = document.getElementById('post-body-input');
+    const typeSelect = document.getElementById('post-type-select');
     const audienceSelect = document.getElementById('post-audience-select');
     const title = titleInput ? titleInput.value.trim() : '';
     const body = bodyInput ? bodyInput.value.trim() : '';
+    const type = typeSelect ? typeSelect.value : 'update';
     const audience = audienceSelect ? audienceSelect.value : 'all';
     if (!title || !body) { alert('Please add a title and a message.'); return; }
     if (!db) { alert('Not connected — check your internet connection.'); return; }
     if (editingPostId) {
-      db.collection('posts').doc(editingPostId).set({ title: title, body: body, audience: audience }, { merge: true }).then(function () {
+      db.collection('posts').doc(editingPostId).set({ title: title, body: body, type: type, audience: audience }, { merge: true }).then(function () {
         editingPostId = null;
         const f = document.getElementById('post-create-form');
         if (f) f.innerHTML = '';
@@ -5000,7 +5008,7 @@
     }
     const now = new Date();
     db.collection('posts').add({
-      title: title, body: body, audience: audience,
+      title: title, body: body, type: type, audience: audience,
       createdAt: now.getTime(),
       date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
