@@ -569,6 +569,9 @@
   ];
   let dashboardEventPhotos = [];
   let dashboardPhotosUnsub = null;
+  // IntersectionObserver instance behind renderEventPhotosGrid()'s infinite-scroll
+  // batching — module-level so each re-render can disconnect the previous one first.
+  let epGridObserver = null;
   let gridSelectMode = false;
   let gridSelectedPhotoIds = [];
   // Whether the Event Detail page is currently showing the isolated Settings view
@@ -2450,20 +2453,45 @@
         '<button class="btn-danger btn-sm" onclick="deleteSelectedPhotos()">' + ICONS.TRASH + ' Delete ' + gridSelectedPhotoIds.length + ' Selected</button>';
       grid.appendChild(bar);
     }
-    filtered.forEach(function (p, idx) {
-      const selected = gridSelectedPhotoIds.indexOf(p.id) > -1;
-      const cell = document.createElement('div');
-      cell.style.cssText = 'aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--bg);position:relative;cursor:pointer;' + (selected ? 'outline:3px solid var(--accent-ink);outline-offset:-3px;' : '');
-      cell.innerHTML = '<img src="' + p.dataUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
-        (p.isHighlight ? '<div style="position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:50%;background:rgba(20,16,20,.55);display:flex;align-items:center;justify-content:center;color:#f5c451;" title="Highlighted">' + ICONS.STAR + '</div>' : '') +
-        (gridSelectMode ? '<div style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:' + (selected ? 'var(--accent-ink)' : 'rgba(255,255,255,.85)') + ';border:1px solid rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;color:#fff;">' + (selected ? ICONS.CHECK : '') + '</div>' : '');
-      cell.addEventListener('click', function () {
-        if (gridSelectMode) toggleSelectPhoto(p.id);
-        else openPhotoLightbox(filtered, idx);
-      });
-      grid.appendChild(cell);
-    });
-    fillIcons();
+    // Same batched/infinite-scroll rendering as the guest app's renderPhotoGrid() —
+    // a studio managing a 20k-photo event needs this grid to stay responsive too, not
+    // just the guest side. thumbUrl (generated at upload time) keeps each cell light;
+    // the lightbox still opens the full-size dataUrl.
+    if (epGridObserver) { epGridObserver.disconnect(); epGridObserver = null; }
+    const EP_GRID_PAGE_SIZE = 60;
+    const sentinel = document.createElement('div');
+    sentinel.style.cssText = 'grid-column:1/-1;height:1px;';
+    grid.appendChild(sentinel);
+    let renderedCount = 0;
+    function renderNextEpBatch() {
+      const end = Math.min(renderedCount + EP_GRID_PAGE_SIZE, filtered.length);
+      const frag = document.createDocumentFragment();
+      for (let idx = renderedCount; idx < end; idx++) {
+        const p = filtered[idx];
+        const selected = gridSelectedPhotoIds.indexOf(p.id) > -1;
+        const cell = document.createElement('div');
+        cell.style.cssText = 'aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--bg);position:relative;cursor:pointer;' + (selected ? 'outline:3px solid var(--accent-ink);outline-offset:-3px;' : '');
+        cell.innerHTML = '<img src="' + (p.thumbUrl || p.dataUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">' +
+          (p.isHighlight ? '<div style="position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:50%;background:rgba(20,16,20,.55);display:flex;align-items:center;justify-content:center;color:#f5c451;" title="Highlighted">' + ICONS.STAR + '</div>' : '') +
+          (gridSelectMode ? '<div style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:' + (selected ? 'var(--accent-ink)' : 'rgba(255,255,255,.85)') + ';border:1px solid rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;color:#fff;">' + (selected ? ICONS.CHECK : '') + '</div>' : '');
+        cell.addEventListener('click', function () {
+          if (gridSelectMode) toggleSelectPhoto(p.id);
+          else openPhotoLightbox(filtered, idx);
+        });
+        frag.appendChild(cell);
+      }
+      grid.insertBefore(frag, sentinel);
+      renderedCount = end;
+      fillIcons();
+      if (renderedCount >= filtered.length && epGridObserver) { epGridObserver.disconnect(); epGridObserver = null; }
+    }
+    renderNextEpBatch();
+    if (filtered.length > EP_GRID_PAGE_SIZE) {
+      epGridObserver = new IntersectionObserver(function (entries) {
+        if (entries[0].isIntersecting) renderNextEpBatch();
+      }, { rootMargin: '900px' });
+      epGridObserver.observe(sentinel);
+    }
   }
 
   // ================= Photo Lightbox =================
@@ -2856,13 +2884,20 @@
       const e = EVENTS.find(function (x) { return x.id === c.eventId; });
       if (e) {
         if (c.kind === 'cover') {
+          // Re-cropping/replacing a cover otherwise leaves the previous crop's Storage
+          // file behind with nothing pointing at it anymore — clean it up once the new
+          // one is safely saved.
+          const oldUrl = e.cover;
           e.cover = url;
           syncEventPrivacyToCloud(e.id, { cover: url });
+          if (oldUrl) deleteStorageFileByUrl(oldUrl);
         } else {
           const album = e.albums.find(function (a) { return a.name === c.albumName; });
           if (album) {
+            const oldUrl = album.cover;
             album.cover = url;
             syncEventPrivacyToCloud(e.id, { albums: e.albums });
+            if (oldUrl) deleteStorageFileByUrl(oldUrl);
           }
         }
         renderAlbumSidebar(e);
@@ -2975,6 +3010,11 @@
     if (!p || !db) return;
     if (!confirm('Delete this photo? This cannot be undone.')) return;
     db.collection('photos').doc(p.id).delete().then(function () {
+      // Fire-and-forget — the Firestore doc is already gone (what actually matters for
+      // the UI/guest gallery), so a slow or failed Storage cleanup shouldn't block or
+      // error out the delete the studio is watching for.
+      deleteStorageFileByUrl(p.dataUrl);
+      deleteStorageFileByUrl(p.thumbUrl);
       const e = EVENTS.find(function (x) { return x.id === currentEventId; });
       if (e) e.photos = Math.max(0, e.photos - 1);
       lightboxPhotos.splice(lightboxIndex, 1);
@@ -3027,6 +3067,29 @@
       (originalName || 'photo.jpg').replace(/[^a-zA-Z0-9_.-]/g, '_');
     const ref = storage.ref().child(folderPath + '/' + safeName);
     return ref.put(blob).then(function (snap) { return snap.ref.getDownloadURL(); });
+  }
+
+  // Deletes the actual Storage bytes behind a photo/cover's download URL — without this,
+  // every "delete photo" / "delete event" / "replace cover" only ever removed the
+  // Firestore *reference* to a file, leaving the real (often multi-MB) file sitting in
+  // Storage forever with nothing pointing at it. That's pure orphaned cost with no way
+  // to reclaim it short of manually digging through the Storage console.
+  //
+  // Guest-uploaded photos are base64 data URLs stored directly in Firestore (never
+  // touch Storage at all — see the guest app's handleGuestPhotoUpload), so this is a
+  // deliberate no-op for those; only real https:// Storage URLs are ever deletable here.
+  // Firebase's storage.refFromURL() only works for URLs from THIS project's bucket, so
+  // this is also naturally a no-op for anything else (e.g. a studio's own external
+  // image link) rather than throwing.
+  function deleteStorageFileByUrl(url) {
+    if (!storage || !url || url.indexOf('http') !== 0) return Promise.resolve();
+    return storage.refFromURL(url).delete().catch(function (err) {
+      // 'storage/object-not-found' just means it was already gone (e.g. deleted twice,
+      // or manually removed from the console) — not a real failure worth surfacing.
+      if (err && err.code !== 'storage/object-not-found') {
+        console.error('Could not delete Storage file for', url, err);
+      }
+    });
   }
 
   // Batches Firestore writes in groups of up to 400 instead of one .add() per photo —
@@ -3105,11 +3168,27 @@
         try {
           const blob = await opts.resize(file);
           const exifPromise = extractExifTags(file);
+          // A small (400px, quality 0.6) thumbnail is generated and uploaded alongside
+          // the full-size photo — guests browsing a large event's grid load this instead
+          // of the multi-MB original, which is what actually drives Storage bandwidth
+          // cost/speed at scale (thumbnails are ~95% smaller). The full-size dataUrl is
+          // still what the viewer, downloads, and Reels use, so quality never suffers.
+          const thumbPromise = resizeFileToBlob(file, 400, 0.6);
           const url = await uploadPhotoToStorage(blob, file.name, 'photos/' + opts.eventId);
+          let thumbUrl = null;
+          try {
+            const thumbBlob = await thumbPromise;
+            thumbUrl = await uploadPhotoToStorage(thumbBlob, file.name, 'thumbs/' + opts.eventId);
+          } catch (thumbErr) {
+            // Thumbnail generation/upload failing is never worth failing the whole photo
+            // upload over — renderPhotoGrid()/renderGrid() in the guest app already fall
+            // back to the full dataUrl whenever thumbUrl is missing.
+            thumbUrl = null;
+          }
           const exif = await exifPromise;
           const ref = db.collection('photos').doc();
           writer.add(ref, {
-            eventId: opts.eventId, album: opts.albumName, quality: opts.quality, dataUrl: url,
+            eventId: opts.eventId, album: opts.albumName, quality: opts.quality, dataUrl: url, thumbUrl: thumbUrl,
             filename: file.name, camera: exif.camera || null, lens: exif.lens || null, capturedAt: exif.capturedAt || null,
             isHighlight: !!opts.markHighlight,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -3269,9 +3348,11 @@
     resizeFileToBlob(file, 600, 0.85).then(function (blob) {
       return uploadPhotoToStorage(blob, file.name, 'photos/' + e.id);
     }).then(function (url) {
+      const oldUrl = album.cover;
       album.cover = url;
       syncEventPrivacyToCloud(e.id, { albums: e.albums });
       renderAlbumSidebar(e);
+      if (oldUrl) deleteStorageFileByUrl(oldUrl);
     }).catch(function () {
       alert('Could not upload thumbnail — check your connection and try again.');
     });
@@ -3306,6 +3387,48 @@
     syncFailureToastTimer = setTimeout(function () { toast.style.display = 'none'; }, 7000);
   }
 
+  // Deletes every Firestore "photos" doc AND its real Storage file for one event.
+  // deleteEvent() below used to only ever remove the event doc itself — every one of
+  // that event's photo documents, plus the actual (often multi-MB) Storage file behind
+  // each one, stayed behind forever with nothing left pointing at them. For a studio
+  // shooting dozens of weddings a year, that's an unbounded, silent Storage cost leak.
+  const DELETE_CONCURRENCY = 6;
+  function deleteEventPhotosFromCloud(eventId) {
+    if (!db) return Promise.resolve();
+    return db.collection('photos').where('eventId', '==', eventId).get().then(function (snapshot) {
+      const docs = snapshot.docs;
+      if (!docs.length) return Promise.resolve();
+      // Batch the Firestore doc deletes (same up-to-400-per-batch pattern as
+      // createPhotoBatchWriter() above) rather than one .delete() call per photo.
+      let batch = db.batch();
+      let count = 0;
+      const commits = [];
+      docs.forEach(function (doc) {
+        batch.delete(doc.ref);
+        count++;
+        if (count >= 400) { commits.push(batch.commit()); batch = db.batch(); count = 0; }
+      });
+      if (count > 0) commits.push(batch.commit());
+
+      // Storage files removed through a bounded worker pool (same concurrency pattern
+      // as uploadPhotosWithPool() above) so a large event doesn't fire thousands of
+      // simultaneous delete requests at once.
+      let nextIndex = 0;
+      async function worker() {
+        while (nextIndex < docs.length) {
+          const data = docs[nextIndex++].data();
+          await deleteStorageFileByUrl(data.dataUrl);
+          await deleteStorageFileByUrl(data.thumbUrl);
+        }
+      }
+      const workers = [];
+      for (let i = 0; i < Math.min(DELETE_CONCURRENCY, docs.length); i++) workers.push(worker());
+      return Promise.all(commits.concat(workers));
+    }).catch(function (err) {
+      console.error('Could not fully clean up photos for deleted event', eventId, err);
+    });
+  }
+
   function deleteEvent() {
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
     if (!e) return;
@@ -3314,6 +3437,13 @@
     if (idx !== -1) EVENTS.splice(idx, 1);
     if (db) db.collection('events').doc(e.id).delete().catch(function () {});
     deleteEventFaceCollection(e.id);
+    deleteEventPhotosFromCloud(e.id);
+    // The event's own cover photo and every album's thumbnail are Storage files
+    // referenced only from fields on the event doc just deleted above — not from the
+    // "photos" collection deleteEventPhotosFromCloud() just cleaned up — so they'd be
+    // orphaned too without this.
+    if (e.cover) deleteStorageFileByUrl(e.cover);
+    (e.albums || []).forEach(function (a) { if (a.cover) deleteStorageFileByUrl(a.cover); });
     showPage('events');
   }
 
@@ -3342,8 +3472,13 @@
     const e = EVENTS.find(function (x) { return x.id === currentEventId; });
     if (!e) return;
     if (!confirm('Delete album "' + name + '"? Photos already in it stay in the event, just unsorted.')) return;
+    // The album's own thumbnail/cover (uploadAlbumThumbnail above) is a real Storage
+    // file that nothing else references — losing the album object here would otherwise
+    // orphan it, same as an event/studio cover replaced without cleanup.
+    const deleted = e.albums.find(function (a) { return a.name === name; });
     e.albums = e.albums.filter(function (a) { return a.name !== name; });
     syncEventPrivacyToCloud(e.id, { albums: e.albums });
+    if (deleted && deleted.cover) deleteStorageFileByUrl(deleted.cover);
     if (selectedAlbumFilter === name) selectedAlbumFilter = e.albums.length ? e.albums[0].name : null;
     renderAlbumSidebar(e);
     renderEventPhotosGrid();
@@ -3398,7 +3533,15 @@
     if (!gridSelectedPhotoIds.length || !db) return;
     if (!confirm('Delete ' + gridSelectedPhotoIds.length + ' selected photo(s)? This cannot be undone.')) return;
     const ids = gridSelectedPhotoIds.slice();
+    // Look up each photo's URL before the doc is gone, so the Storage file can be
+    // cleaned up too instead of being orphaned (see deleteStorageFileByUrl).
+    const urls = [];
+    ids.forEach(function (id) {
+      const p = dashboardEventPhotos.find(function (x) { return x.id === id; });
+      if (p) { urls.push(p.dataUrl); urls.push(p.thumbUrl); }
+    });
     Promise.all(ids.map(function (id) { return db.collection('photos').doc(id).delete(); })).then(function () {
+      urls.forEach(function (url) { if (url) deleteStorageFileByUrl(url); });
       const e = EVENTS.find(function (x) { return x.id === currentEventId; });
       if (e) e.photos = Math.max(0, e.photos - ids.length);
       gridSelectedPhotoIds = [];
@@ -4391,8 +4534,14 @@
       // upload" error: not a connection issue, a rules-scoping mismatch.
       return uploadPhotoToStorage(blob, file.name, 'photos/studio-cover');
     }).then(function (url) {
+      // The old cover's Storage file is otherwise never referenced by anything again
+      // the moment coverUrl is overwritten below — without this, every single re-upload
+      // (studios tend to swap this seasonally/per-branding-refresh) leaves another
+      // orphaned file behind.
+      const oldUrl = STUDIO.coverUrl;
       STUDIO.coverUrl = url;
       if (db) db.collection('studio').doc('profile').set({ coverUrl: url }, { merge: true }).catch(showSyncFailureToast);
+      if (oldUrl) deleteStorageFileByUrl(oldUrl);
       renderProfileWizard(document.getElementById('page-content'));
     }).catch(function (err) {
       console.error('uploadStudioCover failed', err);
@@ -4402,8 +4551,10 @@
 
   function removeStudioCover() {
     if (!confirm('Remove the studio cover photo?')) return;
+    const oldUrl = STUDIO.coverUrl;
     STUDIO.coverUrl = '';
     if (db) db.collection('studio').doc('profile').set({ coverUrl: '' }, { merge: true }).catch(showSyncFailureToast);
+    if (oldUrl) deleteStorageFileByUrl(oldUrl);
     renderProfileWizard(document.getElementById('page-content'));
   }
 
