@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "snapfilmer-ai-face-app"
+  },
+  "targets": {
+    "snapfilmer-ai-face-app": {
+      "hosting": {
+        "dashboard": [
+          "snapfilmer-dashboard"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
