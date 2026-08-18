@@ -3015,6 +3015,7 @@
       // error out the delete the studio is watching for.
       deleteStorageFileByUrl(p.dataUrl);
       deleteStorageFileByUrl(p.thumbUrl);
+      deleteStorageFileByUrl(p.previewUrl);
       const e = EVENTS.find(function (x) { return x.id === currentEventId; });
       if (e) e.photos = Math.max(0, e.photos - 1);
       lightboxPhotos.splice(lightboxIndex, 1);
@@ -3166,29 +3167,34 @@
         const file = files[nextIndex++];
         const statusEl = opts.onFileStart ? opts.onFileStart(file) : null;
         try {
-          const blob = await opts.resize(file);
           const exifPromise = extractExifTags(file);
-          // A small (400px, quality 0.6) thumbnail is generated and uploaded alongside
-          // the full-size photo — guests browsing a large event's grid load this instead
-          // of the multi-MB original, which is what actually drives Storage bandwidth
-          // cost/speed at scale (thumbnails are ~95% smaller). The full-size dataUrl is
-          // still what the viewer, downloads, and Reels use, so quality never suffers.
-          const thumbPromise = resizeFileToBlob(file, 400, 0.6);
-          const url = await uploadPhotoToStorage(blob, file.name, 'photos/' + opts.eventId);
-          let thumbUrl = null;
-          try {
-            const thumbBlob = await thumbPromise;
-            thumbUrl = await uploadPhotoToStorage(thumbBlob, file.name, 'thumbs/' + opts.eventId);
-          } catch (thumbErr) {
-            // Thumbnail generation/upload failing is never worth failing the whole photo
-            // upload over — renderPhotoGrid()/renderGrid() in the guest app already fall
-            // back to the full dataUrl whenever thumbUrl is missing.
-            thumbUrl = null;
-          }
+          // Three sizes come out of every upload: the full-size original (what
+          // downloads/Reels/purchases use), a small 400px thumbnail (grid browsing),
+          // and a ~1800px "preview" (what the guest's full-screen viewer shows — plenty
+          // sharp to fill a phone screen, at a fraction of the original's bytes; there's
+          // no pinch-zoom in the viewer, so nothing is ever visibly softer for it).
+          // All three resizes AND all three uploads run in parallel (Promise.all) rather
+          // than one after another — that's what keeps adding this extra tier from
+          // slowing uploads down: total time is bounded by the slowest single upload
+          // (almost always the original, since it's the biggest file), not the sum of
+          // all three.
+          const [blob, thumbBlob, previewBlob] = await Promise.all([
+            opts.resize(file),
+            resizeFileToBlob(file, 400, 0.6),
+            resizeFileToBlob(file, 1800, 0.85),
+          ]);
+          const [url, thumbUrl, previewUrl] = await Promise.all([
+            uploadPhotoToStorage(blob, file.name, 'photos/' + opts.eventId),
+            // A failed thumb/preview upload is never worth failing the whole photo
+            // over — the guest app already falls back to dataUrl (the original)
+            // whenever thumbUrl/previewUrl is missing.
+            uploadPhotoToStorage(thumbBlob, file.name, 'thumbs/' + opts.eventId).catch(function () { return null; }),
+            uploadPhotoToStorage(previewBlob, file.name, 'previews/' + opts.eventId).catch(function () { return null; }),
+          ]);
           const exif = await exifPromise;
           const ref = db.collection('photos').doc();
           writer.add(ref, {
-            eventId: opts.eventId, album: opts.albumName, quality: opts.quality, dataUrl: url, thumbUrl: thumbUrl,
+            eventId: opts.eventId, album: opts.albumName, quality: opts.quality, dataUrl: url, thumbUrl: thumbUrl, previewUrl: previewUrl,
             filename: file.name, camera: exif.camera || null, lens: exif.lens || null, capturedAt: exif.capturedAt || null,
             isHighlight: !!opts.markHighlight,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -3419,6 +3425,7 @@
           const data = docs[nextIndex++].data();
           await deleteStorageFileByUrl(data.dataUrl);
           await deleteStorageFileByUrl(data.thumbUrl);
+          await deleteStorageFileByUrl(data.previewUrl);
         }
       }
       const workers = [];
@@ -3538,7 +3545,7 @@
     const urls = [];
     ids.forEach(function (id) {
       const p = dashboardEventPhotos.find(function (x) { return x.id === id; });
-      if (p) { urls.push(p.dataUrl); urls.push(p.thumbUrl); }
+      if (p) { urls.push(p.dataUrl); urls.push(p.thumbUrl); urls.push(p.previewUrl); }
     });
     Promise.all(ids.map(function (id) { return db.collection('photos').doc(id).delete(); })).then(function () {
       urls.forEach(function (url) { if (url) deleteStorageFileByUrl(url); });
