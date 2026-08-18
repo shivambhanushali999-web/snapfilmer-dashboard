@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <!-- Reads real camera/lens/capture-date metadata straight out of the JPEG bytes at
      upload time (see extractExifTags()) — powers the Photo Details panel in the
      lightbox instead of showing made-up EXIF values. -->
@@ -261,6 +262,33 @@
      app always thinks it has a normal phone's width, it just displays smaller here. */
   .pw-phone-frame { width: 270px; height: 520px; border-radius: 34px; border: 10px solid #1a1a1a; background: #1a1a1a; box-shadow: 0 24px 60px -20px rgba(0,0,0,.4); flex-shrink: 0; overflow: hidden; position: relative; }
   .pw-phone-screen { width: 400px; height: 800px; transform: scale(0.625); transform-origin: top left; border: none; display: block; background: #F5F1E8; }
+
+  /* ---- WhatsApp Inbox (Messages page) ----
+     Two-pane layout: conversation list on the left, active thread on the right —
+     same shape as the WhatsApp Web / WhatsApp Business app the studio already knows. */
+  .wa-shell { display: flex; height: calc(100vh - 140px); min-height: 480px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+  .wa-list { width: 300px; flex-shrink: 0; border-right: 1px solid var(--border); overflow-y: auto; }
+  .wa-list-row { display: flex; gap: 10px; align-items: center; padding: 12px 14px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .wa-list-row:hover { background: var(--bg); }
+  .wa-list-row.active { background: var(--accent-soft); }
+  .wa-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; flex-shrink: 0; }
+  .wa-list-meta { flex: 1; min-width: 0; }
+  .wa-list-name { font-weight: 800; font-size: 13px; }
+  .wa-list-preview { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+  .wa-list-time { font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .wa-unread-dot { min-width: 18px; height: 18px; border-radius: 10px; background: var(--green); color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
+  .wa-thread { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .wa-thread-head { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .wa-thread-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; background: #F5F1E8; }
+  .wa-bubble { max-width: 62%; padding: 8px 12px; border-radius: 14px; font-size: 13px; line-height: 1.4; word-wrap: break-word; }
+  .wa-bubble.in { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .wa-bubble.out { align-self: flex-end; background: var(--accent-soft); color: var(--accent-ink); border-bottom-right-radius: 4px; }
+  .wa-bubble img, .wa-bubble video { max-width: 100%; border-radius: 8px; display: block; margin-bottom: 4px; }
+  .wa-bubble .wa-meta { font-size: 9.5px; color: var(--muted); margin-top: 3px; text-align: right; }
+  .wa-composer { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); align-items: center; }
+  .wa-composer input[type=text] { flex: 1; }
+  .wa-window-banner { padding: 8px 14px; font-size: 11.5px; text-align: center; background: #FFF6E0; color: #8A5A2C; border-bottom: 1px solid var(--border); }
+  .wa-empty { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -592,6 +620,7 @@
   let db = null;
   let auth = null;
   let storage = null;
+  let functionsSDK = null;
   const OWNER_EMAIL = 'shivambhanushali999@gmail.com';
   try {
     if (typeof firebase !== 'undefined') {
@@ -603,11 +632,17 @@
       // to ~900px/quality 0.7 to fit. Storage has no such cap, so uploads/downloads can
       // stay at full/near-original resolution.
       storage = firebase.storage();
+      // Callable Cloud Functions (sendWhatsappMessage, markWhatsappRead) — the WhatsApp
+      // Inbox is the first dashboard feature that needs to call a Cloud Function directly
+      // rather than just reading/writing Firestore, since actually sending a WhatsApp
+      // message requires the Meta access token, which must stay server-side only.
+      functionsSDK = firebase.functions();
     }
   } catch (err) {
     db = null;
     auth = null;
     storage = null;
+    functionsSDK = null;
   }
 
   function friendlyAuthError(err) {
@@ -767,6 +802,7 @@
         startPostsAdminSync();
         startTicketsSync();
         startEnquiriesBadgeSync();
+        startWhatsappBadgeSync();
       });
     });
   } else {
@@ -916,6 +952,8 @@
       { id: 'overview', label: 'Home', icon: 'HOME' },
       { id: 'events', label: 'Events', icon: 'EVENTS' },
       { id: 'sell', label: 'Sell Photos', icon: 'DOLLAR' },
+      // Direct-to-Meta WhatsApp inbox — no BSP subscription, see renderMessagesPage().
+      { id: 'messages', label: 'Messages', icon: 'WHATSAPP' },
     ]},
     { style: 'icon', items: [
       { id: 'upload', label: 'Upload Photos', icon: 'UPLOAD' },
@@ -998,7 +1036,8 @@
         // an icon-only button does before clicking it.
         if (group.style === 'icon') link.title = item.label;
         link.innerHTML = '<i data-icon="' + item.icon + '"></i><span>' + item.label + '</span>' +
-          (item.id === 'kamsync' ? '<span class="badge">' + KAMSYNC_ACCOUNTS.length + '</span>' : '');
+          (item.id === 'kamsync' ? '<span class="badge">' + KAMSYNC_ACCOUNTS.length + '</span>' : '') +
+          (item.id === 'messages' && WA_TOTAL_UNREAD > 0 ? '<span class="badge">' + WA_TOTAL_UNREAD + '</span>' : '');
         link.addEventListener('click', function () {
           showPage(item.id);
           sb.classList.remove('nav-open'); // close the mobile dropdown after picking a page
@@ -1059,6 +1098,13 @@
   // this dashboard — no need for real per-user read-state.
   let ALL_ENQUIRIES_DASH = [];
   let enquiriesBadgeUnsub;
+  // ---- WhatsApp Inbox state ----
+  let WA_CONVERSATIONS = [];
+  let WA_TOTAL_UNREAD = 0;
+  let waBadgeUnsub = null;
+  let waActivePhone = null;
+  let waMessagesUnsub = null;
+  let waMessages = [];
   function startEnquiriesBadgeSync() {
     if (!db || enquiriesBadgeUnsub) return;
     enquiriesBadgeUnsub = db.collection('enquiries').onSnapshot(function (snap) {
@@ -1124,6 +1170,161 @@
       }).join('') + '</tbody></table></div></div>';
   }
 
+  // ================= WhatsApp Inbox =================
+  // Talks straight to Meta's Cloud API via three Cloud Functions (whatsappWebhook,
+  // sendWhatsappMessage, markWhatsappRead — see functions/index.js) instead of a paid
+  // BSP dashboard like AiSensy/WATI. Every conversation with a client lives in Firestore
+  // under whatsappConversations/{phone}, kept in sync live here the same way the rest of
+  // this dashboard mirrors Firestore (onSnapshot, no manual refresh needed).
+  function startWhatsappBadgeSync() {
+    if (!db || waBadgeUnsub) return;
+    waBadgeUnsub = db.collection('whatsappConversations')
+      .orderBy('lastMessageAt', 'desc')
+      .onSnapshot(function (snap) {
+        WA_CONVERSATIONS = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        WA_TOTAL_UNREAD = WA_CONVERSATIONS.reduce(function (s, c) { return s + (c.unreadCount || 0); }, 0);
+        // Keep the sidebar badge current even when the studio isn't on the Messages
+        // page — re-render just the sidebar rather than the whole page.
+        renderSidebar();
+        if (currentPage === 'messages') renderMessagesPage(document.getElementById('page-content'));
+      }, function () {});
+  }
+
+  function waInitials(convo) {
+    const label = (convo.name || convo.phone || '?').trim();
+    return label.slice(0, 2).toUpperCase();
+  }
+
+  function waFormatTime(ts) {
+    if (!ts || !ts.toDate) return '';
+    const d = ts.toDate();
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    return sameDay
+      ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function renderMessagesPage(el) {
+    if (!functionsSDK) {
+      el.innerHTML = '<div class="card" style="text-align:center;padding:48px 24px;">' +
+        '<div class="card-title">WhatsApp Inbox not connected</div>' +
+        '<div class="card-sub">Firebase Functions isn\'t available in this session — check your internet connection and reload.</div></div>';
+      return;
+    }
+
+    el.innerHTML =
+      '<div class="wa-shell">' +
+        '<div class="wa-list" id="wa-list"></div>' +
+        '<div class="wa-thread" id="wa-thread"></div>' +
+      '</div>';
+
+    renderWaList();
+    renderWaThread();
+  }
+
+  function renderWaList() {
+    const list = document.getElementById('wa-list');
+    if (!list) return;
+    if (!WA_CONVERSATIONS.length) {
+      list.innerHTML = '<div style="padding:24px 16px;color:var(--muted);font-size:12.5px;text-align:center;">No conversations yet.<br>They\'ll show up here the moment a client messages your WhatsApp number.</div>';
+      return;
+    }
+    list.innerHTML = WA_CONVERSATIONS.map(function (c) {
+      return '<div class="wa-list-row' + (c.phone === waActivePhone ? ' active' : '') + '" data-wa-phone="' + c.phone + '">' +
+        '<div class="wa-avatar">' + waInitials(c) + '</div>' +
+        '<div class="wa-list-meta">' +
+          '<div class="wa-list-name">' + escapeHtmlGD(c.name || c.phone) + '</div>' +
+          '<div class="wa-list-preview">' + (c.lastMessageDirection === 'out' ? 'You: ' : '') + escapeHtmlGD(c.lastMessage || '') + '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">' +
+          '<div class="wa-list-time">' + waFormatTime(c.lastMessageAt) + '</div>' +
+          (c.unreadCount ? '<div class="wa-unread-dot">' + c.unreadCount + '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+    list.querySelectorAll('[data-wa-phone]').forEach(function (row) {
+      row.addEventListener('click', function () { openWaConversation(row.dataset.waPhone); });
+    });
+  }
+
+  function openWaConversation(phone) {
+    waActivePhone = phone;
+    renderWaList();
+    renderWaThread();
+    if (waMessagesUnsub) { waMessagesUnsub(); waMessagesUnsub = null; }
+    waMessages = [];
+    waMessagesUnsub = db.collection('whatsappConversations').doc(phone)
+      .collection('messages').orderBy('timestamp', 'asc')
+      .onSnapshot(function (snap) {
+        waMessages = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        renderWaThread();
+      }, function () {});
+
+    functionsSDK.httpsCallable('markWhatsappRead')({ phone: phone }).catch(function () {});
+  }
+
+  function renderWaThread() {
+    const thread = document.getElementById('wa-thread');
+    if (!thread) return;
+    if (!waActivePhone) {
+      thread.innerHTML = '<div class="wa-empty">' + ICONS.WHATSAPP + '<div>Select a conversation to start chatting.</div></div>';
+      return;
+    }
+    const convo = WA_CONVERSATIONS.find(function (c) { return c.phone === waActivePhone; }) || { phone: waActivePhone };
+    const windowOpen = convo.windowExpiresAt && convo.windowExpiresAt.toDate
+      ? convo.windowExpiresAt.toDate().getTime() > Date.now()
+      : (convo.windowExpiresAt instanceof Date ? convo.windowExpiresAt.getTime() > Date.now() : false);
+
+    thread.innerHTML =
+      '<div class="wa-thread-head"><div class="wa-avatar">' + waInitials(convo) + '</div>' +
+        '<div><div style="font-weight:800;font-size:14px;">' + escapeHtmlGD(convo.name || convo.phone) + '</div>' +
+        '<div style="font-size:11px;color:var(--muted);">+' + escapeHtmlGD(convo.phone) + '</div></div></div>' +
+      (windowOpen ? '' : '<div class="wa-window-banner">24-hour reply window has closed — this client needs to message you again before you can send a free-text reply.</div>') +
+      '<div class="wa-thread-body" id="wa-thread-body"></div>' +
+      '<div class="wa-composer">' +
+        '<input type="text" class="input" id="wa-composer-input" placeholder="' + (windowOpen ? 'Type a message…' : 'Reply window closed…') + '"' + (windowOpen ? '' : ' disabled') + '>' +
+        '<button class="btn-solid" id="wa-composer-send"' + (windowOpen ? '' : ' disabled') + '>Send</button>' +
+      '</div>';
+
+    const body = document.getElementById('wa-thread-body');
+    if (!waMessages.length) {
+      body.innerHTML = '<div style="margin:auto;color:var(--muted);font-size:12.5px;">No messages yet.</div>';
+    } else {
+      body.innerHTML = waMessages.map(function (m) {
+        let inner = '';
+        if (m.mediaUrl && m.type === 'image') inner += '<img src="' + m.mediaUrl + '" alt="">';
+        else if (m.mediaUrl && m.type === 'video') inner += '<video src="' + m.mediaUrl + '" controls></video>';
+        else if (m.mediaUrl) inner += '<a href="' + m.mediaUrl + '" target="_blank" rel="noopener">Download ' + (m.type || 'file') + '</a><br>';
+        if (m.text) inner += escapeHtmlGD(m.text);
+        const tickLabel = m.direction === 'out' ? (' · ' + (m.status || 'sent')) : '';
+        return '<div class="wa-bubble ' + m.direction + '">' + inner +
+          '<div class="wa-meta">' + waFormatTime(m.timestamp) + tickLabel + '</div></div>';
+      }).join('');
+    }
+    body.scrollTop = body.scrollHeight;
+
+    const sendBtn = document.getElementById('wa-composer-send');
+    const input = document.getElementById('wa-composer-input');
+    if (sendBtn) {
+      sendBtn.addEventListener('click', sendWaMessage);
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') sendWaMessage(); });
+    }
+  }
+
+  function sendWaMessage() {
+    const input = document.getElementById('wa-composer-input');
+    const text = input ? input.value.trim() : '';
+    if (!text || !waActivePhone) return;
+    input.value = '';
+    input.disabled = true;
+    functionsSDK.httpsCallable('sendWhatsappMessage')({ phone: waActivePhone, text: text })
+      .catch(function (err) {
+        alert((err && err.message) || 'Could not send — check your internet connection and try again.');
+      })
+      .finally(function () { input.disabled = false; input.focus(); });
+  }
+
   const PAGE_TITLES = {
     overview: 'Overview', events: 'Events', 'event-detail': 'Event Settings', upload: 'Upload Photos',
     kamsync: 'Kam-Sync', share: 'Share & QR', commonqr: 'Common QR', posts: 'Posts', watermark: 'Watermark', tickets: 'Support Tickets', sell: 'Sell Photos', analytics: 'Analytics', subscription: 'Subscription', settings: 'Settings',
@@ -1131,6 +1332,7 @@
     sellerdash: 'Seller Dashboard', sellsettings: 'Sell Photos Settings', bizsettings: 'Business Settings', sellwatermark: 'Standard Watermark', sellwizard: 'Create Sell Photos Event',
     createevent: 'Create Event',
     enquiries: 'Enquiries',
+    messages: 'Messages',
   };
 
   function showPage(name, param) {
@@ -1148,6 +1350,7 @@
       sellerdash: renderSellerDashboard, sellsettings: renderSellSettings, bizsettings: renderBusinessSettings, sellwatermark: renderSellWatermarkEditor, sellwizard: renderSellWizard,
       createevent: renderCreateEventWizard,
       enquiries: renderEnquiriesPage,
+      messages: renderMessagesPage,
     };
     const renderer = renderers[name];
     if (renderer) renderer(el);
