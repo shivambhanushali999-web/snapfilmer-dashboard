@@ -416,6 +416,12 @@
     // My Photos) — we can't legally bundle real music ourselves, so a reel is silent
     // until the studio uploads one they're licensed to use. See uploadReelMusic() below.
     reelMusicUrl: '',
+    // Master on/off switch for the guest app's "Create My Reel" feature (My Photos tab).
+    // Defaults to true for existing studios (Object.assign from a saved profile doc
+    // overwrites this the moment a real value exists) — flipped off from the Guest
+    // Reels settings card below when the studio wants to hide it, e.g. while it's
+    // misbehaving. See toggleReelsEnabled() and the guest app's openMyReel() guard.
+    reelsEnabled: true,
     // Discrete, one-off purchased packs — separate from creditsTotal (the shared
     // subscription pool). Each is a standalone unit with its own 12-month validity;
     // "Create Event from Purchased Pack" consumes exactly one of these per event.
@@ -6519,7 +6525,8 @@
       '</div>' +
       '<div class="card" style="margin-top:16px;">' +
         '<div class="card-title">Guest Reels</div>' +
-        '<div class="card-sub">Background music for the "Create My Reel" feature in the guest app (My Photos) — every guest\'s auto-generated highlight video uses this same track. We can\'t bundle real music ourselves for licensing reasons, so reels stay silent until you add one you\'re licensed to use (royalty-free or one you own the rights to).</div>' +
+        toggleRowHtml('Show "Create My Reel" in guest app', 'Lets guests auto-generate a short highlight video from their matched photos (My Photos tab). Turn this off to hide the feature for everyone if it\'s acting up — existing photos/albums are unaffected.', STUDIO.reelsEnabled !== false, 'toggle-reels-enabled', '') +
+        '<div class="card-sub" style="margin-top:14px;">Background music for the "Create My Reel" feature in the guest app (My Photos) — every guest\'s auto-generated highlight video uses this same track. We can\'t bundle real music ourselves for licensing reasons, so reels stay silent until you add one you\'re licensed to use (royalty-free or one you own the rights to).</div>' +
         (STUDIO.reelMusicUrl
           ? '<div style="display:flex;align-items:center;gap:10px;margin:14px 0;padding:10px 12px;background:var(--bg);border-radius:10px;">' +
               '<audio controls src="' + STUDIO.reelMusicUrl + '" style="flex:1;height:32px;"></audio>' +
@@ -6545,6 +6552,18 @@
     if (prefUploads) prefUploads.addEventListener('change', function () { NOTIFICATION_PREFS.newGuestUploads = prefUploads.checked; saveNotificationPrefs(); });
     if (prefOrders) prefOrders.addEventListener('change', function () { NOTIFICATION_PREFS.newOrders = prefOrders.checked; saveNotificationPrefs(); });
     if (prefWeekly) prefWeekly.addEventListener('change', function () { NOTIFICATION_PREFS.weeklySummary = prefWeekly.checked; saveNotificationPrefs(); });
+    const reelsToggle = document.getElementById('toggle-reels-enabled');
+    if (reelsToggle) reelsToggle.addEventListener('change', function () { toggleReelsEnabled(reelsToggle.checked); });
+  }
+
+  // Master on/off switch for the guest app's "Create My Reel" feature — see the
+  // reelsEnabled comment on STUDIO above and the guard in the guest app's
+  // openMyReel(). Saved to the same studio/profile doc the phone preview iframe
+  // already reads from, so the live preview reflects the change immediately.
+  function toggleReelsEnabled(enabled) {
+    STUDIO.reelsEnabled = enabled;
+    if (db) db.collection('studio').doc('profile').set({ reelsEnabled: enabled }, { merge: true }).catch(showSyncFailureToast);
+    postProfileDraftToPreview();
   }
 
   function profileWizardStepContent(key) {
@@ -6685,6 +6704,7 @@
         name: STUDIO.name, email: STUDIO.email, phone: STUDIO.phone, website: STUDIO.website,
         about: STUDIO.about, brandColor: STUDIO.brandColor, social: STUDIO.social,
         logoUrl: STUDIO.logoUrl, coverUrl: STUDIO.coverUrl, portfolioEventId: STUDIO.portfolioEventId,
+        reelsEnabled: STUDIO.reelsEnabled,
       },
     }, guestAppOrigin);
   }
