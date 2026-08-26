@@ -968,6 +968,11 @@
       { id: 'commonqr', label: 'Common QR', icon: 'QR' },
       { id: 'posts', label: 'Posts', icon: 'POSTS' },
       { id: 'watermark', label: 'Watermark', icon: 'DROPLET' },
+      // Local-only tool (needs the File System Access API — Chrome/Edge desktop) that
+      // matches a pasted list of favorited filenames (from the guest's "Share with
+      // Photographer" email) against a real folder of originals on this computer, and
+      // copies the matches into a new subfolder. See renderFavoriteExtractorPage().
+      { id: 'favextract', label: 'Favorite Extractor', icon: 'FOLDER' },
       { id: 'analytics', label: 'Analytics', icon: 'CHART' },
       // Studio-wide leads across every event, one place — previously this only existed
       // as a per-event button inside Event Settings, meaning checking for new enquiries
@@ -1333,7 +1338,7 @@
 
   const PAGE_TITLES = {
     overview: 'Overview', events: 'Events', 'event-detail': 'Event Settings', upload: 'Upload Photos',
-    kamsync: 'Kam-Sync', share: 'Share & QR', commonqr: 'Common QR', posts: 'Posts', watermark: 'Watermark', tickets: 'Support Tickets', sell: 'Sell Photos', analytics: 'Analytics', subscription: 'Subscription', settings: 'Settings',
+    kamsync: 'Kam-Sync', share: 'Share & QR', commonqr: 'Common QR', posts: 'Posts', watermark: 'Watermark', favextract: 'Favorite Extractor', tickets: 'Support Tickets', sell: 'Sell Photos', analytics: 'Analytics', subscription: 'Subscription', settings: 'Settings',
     wallet: 'Wallet & Commission Ledger', usagereport: 'Usage Report',
     sellerdash: 'Seller Dashboard', sellsettings: 'Sell Photos Settings', bizsettings: 'Business Settings', sellwatermark: 'Standard Watermark', sellwizard: 'Create Sell Photos Event',
     createevent: 'Create Event',
@@ -1351,7 +1356,7 @@
     el.innerHTML = '';
     const renderers = {
       overview: renderOverview, events: renderEvents, 'event-detail': renderEventDetail, upload: renderUpload,
-      kamsync: renderKamSync, share: renderShare, commonqr: renderCommonQR, posts: renderPostsPage, watermark: renderWatermarkPage, tickets: renderTicketsPage, sell: renderSell, analytics: renderAnalytics, subscription: renderSubscriptionPage, settings: renderSettings,
+      kamsync: renderKamSync, share: renderShare, commonqr: renderCommonQR, posts: renderPostsPage, watermark: renderWatermarkPage, favextract: renderFavoriteExtractorPage, tickets: renderTicketsPage, sell: renderSell, analytics: renderAnalytics, subscription: renderSubscriptionPage, settings: renderSettings,
       wallet: renderWalletLedger, usagereport: renderUsageReport,
       sellerdash: renderSellerDashboard, sellsettings: renderSellSettings, bizsettings: renderBusinessSettings, sellwatermark: renderSellWatermarkEditor, sellwizard: renderSellWizard,
       createevent: renderCreateEventWizard,
@@ -5637,6 +5642,206 @@
     wireWatermarkCard('standard');
     wireWatermarkCard('original');
     fillIcons();
+  }
+
+  // ================= Favorite Extractor =================
+  // Guests favorite photos in the guest app, then "Share with Photographer" (My
+  // Favorites screen) emails the studio a plain list of the real camera filenames
+  // (see shareFavoritesWithPhotographer() in the guest app — it sends p.filename, not
+  // a generated id, specifically so it can be pasted straight in here). The
+  // photographer pastes that list below, points this at the folder holding the actual
+  // full-resolution originals on THIS computer — which can be nested many folders deep
+  // (multiple cameras/days/sub-shoots) — and it recursively searches every subfolder
+  // for exact-name matches and copies just those files into a new
+  // "snapfilmer-favorites" folder, so nobody has to hunt through thousands of RAW/JPEG
+  // files by hand.
+  //
+  // This needs the File System Access API (showDirectoryPicker + createWritable) —
+  // real read/write access to an arbitrary folder on disk is a Chrome/Edge-on-desktop
+  // feature; Safari and every mobile browser refuse to grant it at all, so
+  // favExtractSupported() gates the whole UI and explains that plainly instead of the
+  // buttons just silently doing nothing.
+  let favExtractRootHandle = null;
+  let favExtractResults = [];
+  let favExtractRunning = false;
+
+  function favExtractSupported() {
+    return typeof window.showDirectoryPicker === 'function';
+  }
+
+  function renderFavoriteExtractorPage(el) {
+    const supported = favExtractSupported();
+    el.innerHTML =
+      '<div class="grid-2" style="align-items:start;">' +
+        '<div class="card">' +
+          '<div class="card-title">Extraction Setup</div>' +
+          '<div class="card-sub">Paste the filenames a guest sent in their "Share with Photographer" email, pick the folder that holds your original photos on this computer, and this searches every folder inside it for exact matches.</div>' +
+          (supported ? '' :
+            '<div class="card-sub" style="color:#D0342C;background:#fdf0ef;border:1px solid #f0c9c7;border-radius:10px;padding:10px 12px;">This tool needs Google Chrome or Microsoft Edge on a computer — folder access isn\'t available in this browser. Open the dashboard there to use it.</div>') +
+          '<div class="field"><label>Favorite file names (one per line)</label>' +
+            '<textarea class="input" id="favext-names" rows="10" placeholder="NYN_6671.JPG&#10;NYN_6851.JPG&#10;SNAP0819.JPG" style="font-family:ui-monospace,monospace;font-size:12.5px;resize:vertical;" oninput="updateFavExtractRunButton()"' + (supported ? '' : ' disabled') + '></textarea>' +
+          '</div>' +
+          '<div class="card-sub" id="favext-folder-status" style="margin:0 0 14px;">No folder selected yet.</div>' +
+          '<button type="button" class="btn-outline" id="favext-pick-btn" onclick="selectFavExtractFolder()"' + (supported ? '' : ' disabled') + '><i data-icon="FOLDER"></i> Select Original Photos Folder</button>' +
+          '<button type="button" class="btn-solid" id="favext-run-btn" style="width:100%;margin-top:14px;" onclick="runFavoriteExtraction()" disabled>Extract Favorites</button>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="card-title">Extraction Results</div>' +
+          '<div class="card-sub">Copied files land in a new "snapfilmer-favorites" folder inside the one you selected.</div>' +
+          '<div id="favext-progress-wrap" style="display:none;margin-bottom:16px;">' +
+            '<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin-bottom:6px;"><span id="favext-progress-label">Extracting…</span><span id="favext-progress-pct"></span></div>' +
+            '<div style="height:8px;border-radius:6px;background:var(--border);overflow:hidden;"><div id="favext-progress-bar" style="height:100%;width:0%;background:var(--accent);transition:width .15s;"></div></div>' +
+          '</div>' +
+          '<div class="grid-3" id="favext-summary" style="display:none;margin-bottom:16px;"></div>' +
+          '<div id="favext-results-list" style="max-height:520px;overflow-y:auto;"></div>' +
+        '</div>' +
+      '</div>';
+    fillIcons();
+  }
+
+  function updateFavExtractRunButton() {
+    const btn = document.getElementById('favext-run-btn');
+    const namesEl = document.getElementById('favext-names');
+    if (!btn || !namesEl) return;
+    const hasNames = namesEl.value.split('\n').some(function (l) { return l.trim(); });
+    btn.disabled = !(favExtractRootHandle && hasNames && !favExtractRunning);
+  }
+
+  async function selectFavExtractFolder() {
+    if (!favExtractSupported()) return;
+    try {
+      favExtractRootHandle = await window.showDirectoryPicker();
+      const statusEl = document.getElementById('favext-folder-status');
+      if (statusEl) { statusEl.textContent = 'Selected: "' + favExtractRootHandle.name + '" — will search this folder and everything inside it.'; statusEl.style.color = 'var(--ink)'; }
+      updateFavExtractRunButton();
+    } catch (err) {
+      // User closed/cancelled the native folder picker — not worth surfacing as an error.
+    }
+  }
+
+  // Recursively walks a directory handle, collecting { name, handle } for every FILE
+  // found at any depth — this is what lets one selected top-level folder (with
+  // cameras/days/sub-shoots nested inside it) get fully searched instead of just its
+  // immediate contents.
+  async function walkFavExtractDir(dirHandle, out) {
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        out.push({ name: entry.name, handle: entry });
+      } else if (entry.kind === 'directory') {
+        // Never descend into a folder this tool itself created on a previous run —
+        // otherwise re-running it would "find" its own previously-copied output and
+        // copy it right back into itself.
+        if (entry.name === 'snapfilmer-favorites') continue;
+        await walkFavExtractDir(entry, out);
+      }
+    }
+  }
+
+  async function runFavoriteExtraction() {
+    if (!favExtractRootHandle || favExtractRunning) return;
+    const namesEl = document.getElementById('favext-names');
+    const wanted = (namesEl ? namesEl.value : '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    if (!wanted.length) return;
+
+    favExtractRunning = true;
+    favExtractResults = [];
+    const runBtn = document.getElementById('favext-run-btn');
+    const pickBtn = document.getElementById('favext-pick-btn');
+    if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Scanning folder…'; }
+    if (pickBtn) pickBtn.disabled = true;
+    const progressWrap = document.getElementById('favext-progress-wrap');
+    const progressLabel = document.getElementById('favext-progress-label');
+    const progressPct = document.getElementById('favext-progress-pct');
+    const progressBar = document.getElementById('favext-progress-bar');
+    const summaryEl = document.getElementById('favext-summary');
+    const listEl = document.getElementById('favext-results-list');
+    if (progressWrap) progressWrap.style.display = 'block';
+    if (summaryEl) summaryEl.style.display = 'none';
+    if (listEl) listEl.innerHTML = '';
+    if (progressLabel) progressLabel.textContent = 'Scanning folder and all its subfolders…';
+    if (progressPct) progressPct.textContent = '';
+    if (progressBar) progressBar.style.width = '0%';
+
+    try {
+      const allFiles = [];
+      await walkFavExtractDir(favExtractRootHandle, allFiles);
+      // Case-insensitive lookup — first match wins if the same filename somehow shows
+      // up in two different subfolders (e.g. two cameras that both reset to
+      // IMG_0001.JPG).
+      const byLowerName = new Map();
+      allFiles.forEach(function (f) { if (!byLowerName.has(f.name.toLowerCase())) byLowerName.set(f.name.toLowerCase(), f); });
+
+      let destDirHandle = null;
+      let copied = 0, missing = 0, errors = 0;
+      for (let i = 0; i < wanted.length; i++) {
+        const name = wanted[i];
+        const match = byLowerName.get(name.toLowerCase());
+        const row = { name: name };
+        if (!match) {
+          row.status = 'missing';
+          missing++;
+        } else {
+          try {
+            if (!destDirHandle) destDirHandle = await favExtractRootHandle.getDirectoryHandle('snapfilmer-favorites', { create: true });
+            const file = await match.handle.getFile();
+            const destHandle = await destDirHandle.getFileHandle(match.name, { create: true });
+            const writable = await destHandle.createWritable();
+            await writable.write(file);
+            await writable.close();
+            row.status = 'copied';
+            row.path = 'snapfilmer-favorites/' + match.name;
+            copied++;
+          } catch (err) {
+            row.status = 'error';
+            row.error = (err && err.message) || 'Copy failed';
+            errors++;
+          }
+        }
+        favExtractResults.push(row);
+        const pct = Math.round(((i + 1) / wanted.length) * 100);
+        if (progressLabel) progressLabel.textContent = 'Copying ' + (i + 1) + ' of ' + wanted.length + '…';
+        if (progressPct) progressPct.textContent = pct + '%';
+        if (progressBar) progressBar.style.width = pct + '%';
+        renderFavExtractResultsList();
+      }
+
+      if (progressLabel) progressLabel.textContent = 'Extraction completed';
+      if (summaryEl) {
+        summaryEl.style.display = 'grid';
+        summaryEl.innerHTML =
+          '<div class="card" style="background:#eef8f2;border-color:#bfe3cd;padding:14px;text-align:center;"><div style="font-size:22px;font-weight:800;color:#1FA97A;">' + copied + '</div><div class="card-sub" style="margin:2px 0 0;">Copied</div></div>' +
+          '<div class="card" style="background:#fff8ec;border-color:#f0dfb8;padding:14px;text-align:center;"><div style="font-size:22px;font-weight:800;color:#B8860B;">' + missing + '</div><div class="card-sub" style="margin:2px 0 0;">Missing</div></div>' +
+          '<div class="card" style="background:#fdf0ef;border-color:#f0c9c7;padding:14px;text-align:center;"><div style="font-size:22px;font-weight:800;color:#D0342C;">' + errors + '</div><div class="card-sub" style="margin:2px 0 0;">Errors</div></div>';
+      }
+    } catch (err) {
+      if (progressLabel) progressLabel.textContent = 'Failed to scan folder: ' + ((err && err.message) || 'unknown error');
+    } finally {
+      favExtractRunning = false;
+      if (pickBtn) pickBtn.disabled = false;
+      if (runBtn) runBtn.textContent = 'Extract Favorites';
+      updateFavExtractRunButton();
+    }
+  }
+
+  function renderFavExtractResultsList() {
+    const listEl = document.getElementById('favext-results-list');
+    if (!listEl) return;
+    const statusMeta = {
+      copied: { label: 'Copied', color: '#1FA97A' },
+      missing: { label: 'Missing', color: '#B8860B' },
+      error: { label: 'Error', color: '#D0342C' },
+    };
+    listEl.innerHTML = favExtractResults.map(function (r, i) {
+      const meta = statusMeta[r.status] || { label: r.status, color: 'var(--muted)' };
+      const sub = r.status === 'copied' ? ('Copied to: ' + r.path)
+        : r.status === 'error' ? (r.error || 'Copy failed')
+        : 'Not found anywhere in the selected folder or its subfolders.';
+      return '<div class="card" style="padding:12px 14px;margin-bottom:8px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">' +
+        '<div style="min-width:0;"><div style="font-weight:700;font-size:12.5px;">' + (i + 1) + '. ' + escapeHtmlGD(r.name) + '</div>' +
+        '<div class="card-sub" style="margin:2px 0 0;word-break:break-all;">' + escapeHtmlGD(sub) + '</div></div>' +
+        '<div style="font-size:11.5px;font-weight:800;color:' + meta.color + ';white-space:nowrap;">' + meta.label + '</div>' +
+      '</div>';
+    }).join('');
   }
 
   // Per-event override version of watermarkCard() above — same layout, but wired
