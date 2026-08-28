@@ -1304,10 +1304,29 @@
     } else {
       body.innerHTML = waMessages.map(function (m) {
         let inner = '';
-        if (m.mediaUrl && m.type === 'image') inner += '<img src="' + m.mediaUrl + '" alt="">';
-        else if (m.mediaUrl && m.type === 'video') inner += '<video src="' + m.mediaUrl + '" controls></video>';
-        else if (m.mediaUrl) inner += '<a href="' + m.mediaUrl + '" target="_blank" rel="noopener">Download ' + (m.type || 'file') + '</a><br>';
-        if (m.text) inner += escapeHtmlGD(m.text);
+        if (m.mediaUrl && (m.type === 'image' || m.type === 'sticker')) {
+          inner += '<img src="' + m.mediaUrl + '" alt="" style="cursor:pointer;' + (m.type === 'sticker' ? 'max-width:120px;' : '') + '" onclick="window.open(\'' + m.mediaUrl + '\', \'_blank\')">';
+        } else if (m.mediaUrl && m.type === 'video') {
+          inner += '<video src="' + m.mediaUrl + '" controls></video>';
+        } else if (m.mediaUrl && m.type === 'audio') {
+          inner += '<audio src="' + m.mediaUrl + '" controls style="max-width:240px;"></audio>';
+        } else if (m.mediaUrl && m.type === 'document') {
+          // Real WhatsApp-style document bubble — file icon + actual filename (from
+          // Meta's msg.document.filename, see handleIncomingMessage()), not a bare
+          // "Download document" link.
+          inner += '<a href="' + m.mediaUrl + '" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,0.04);border-radius:10px;padding:10px 12px;text-decoration:none;color:inherit;min-width:180px;">' +
+            '<span style="width:32px;height:32px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + ICONS.CLIPBOARD + '</span>' +
+            '<span style="min-width:0;"><span style="display:block;font-weight:700;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtmlGD(m.filename || 'Document') + '</span>' +
+            '<span style="display:block;font-size:10.5px;color:var(--muted);">Tap to download</span></span>' +
+          '</a>';
+        } else if (m.mediaUrl) {
+          inner += '<a href="' + m.mediaUrl + '" target="_blank" rel="noopener">Download ' + (m.type || 'file') + '</a><br>';
+        } else if (!m.text) {
+          // No media AND no text — a genuinely unsupported message type Meta didn't
+          // relay any content for (location share, poll, reaction, view-once, etc.).
+          inner += '<span style="font-style:italic;color:var(--muted);">This message type isn\'t supported here yet — ask the client to resend as text or a photo.</span>';
+        }
+        if (m.text) inner += (inner ? '<div style="margin-top:6px;">' : '') + escapeHtmlGD(m.text) + (inner ? '</div>' : '');
         const tickLabel = m.direction === 'out' ? (' · ' + (m.status || 'sent')) : '';
         return '<div class="wa-bubble ' + m.direction + '">' + inner +
           '<div class="wa-meta">' + waFormatTime(m.timestamp) + tickLabel + '</div></div>';
