@@ -1119,7 +1119,7 @@
   function startEnquiriesBadgeSync() {
     if (!db || enquiriesBadgeUnsub) return;
     enquiriesBadgeUnsub = db.collection('enquiries').onSnapshot(function (snap) {
-      ALL_ENQUIRIES_DASH = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      ALL_ENQUIRIES_DASH = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
       updateTopbarNotifBadge();
     }, function () {});
   }
@@ -1192,7 +1192,7 @@
     waBadgeUnsub = db.collection('whatsappConversations')
       .orderBy('lastMessageAt', 'desc')
       .onSnapshot(function (snap) {
-        WA_CONVERSATIONS = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        WA_CONVERSATIONS = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
         WA_TOTAL_UNREAD = WA_CONVERSATIONS.reduce(function (s, c) { return s + (c.unreadCount || 0); }, 0);
         // Keep the sidebar badge current even when the studio isn't on the Messages
         // page — re-render just the sidebar rather than the whole page.
@@ -1268,7 +1268,7 @@
     waMessagesUnsub = db.collection('whatsappConversations').doc(phone)
       .collection('messages').orderBy('timestamp', 'asc')
       .onSnapshot(function (snap) {
-        waMessages = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+        waMessages = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
         renderWaThread();
       }, function () {});
 
@@ -1684,6 +1684,12 @@
 
     db.collection('events').doc(oldId).get().then(function (doc) {
       const data = doc.exists ? doc.data() : Object.assign({}, e);
+      // The event document stores its own `id` field internally (set at creation) —
+      // that field, not just the Firestore doc ID, is what needs to match the new ID
+      // now that the id-override bug above is fixed and doc.id always wins on read,
+      // but keeping this field in sync too avoids any code elsewhere that might read
+      // a raw doc.data().id directly.
+      data.id = cleanId;
       return db.collection('events').doc(cleanId).set(data)
         .then(function () { return Promise.all(EVENT_LINKED_COLLECTIONS.map(migrateCollection)); })
         .then(function () { return db.collection('events').doc(oldId).delete(); });
@@ -2645,7 +2651,7 @@
     if (dashboardPhotosUnsub) { dashboardPhotosUnsub(); dashboardPhotosUnsub = null; }
     if (!db) return;
     dashboardPhotosUnsub = db.collection('photos').where('eventId', '==', eventId).onSnapshot(function (snap) {
-      dashboardEventPhotos = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      dashboardEventPhotos = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
       reconcileAlbumCounts(eventId);
       // Highlights' "(N)" count in the sidebar isn't a stored field like named-album
       // counts are — it's always derived live from dashboardEventPhotos — so it needs
@@ -3998,7 +4004,7 @@
     if (!db) { body.innerHTML = '<div class="empty-note">No cloud connection.</div>'; return; }
     db.collection('enquiries').where('eventId', '==', currentEventId).get().then(function (snap) {
       if (snap.empty) { body.innerHTML = '<div class="empty-note">No enquiries yet. Turn on "Enquiry / Lead Capture Form" in Settings &gt; Privacy &amp; Access so gallery visitors can send one.</div>'; return; }
-      const rows = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); })
+      const rows = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); })
         .sort(function (a, b) { return (b.createdAt ? b.createdAt.toMillis() : 0) - (a.createdAt ? a.createdAt.toMillis() : 0); });
       body.innerHTML = '<div class="table-card"><table><thead><tr><th>Name</th><th>Contact</th><th>Message</th></tr></thead><tbody>' +
         rows.map(function (d) {
@@ -5353,7 +5359,7 @@
     if (!db || eventsUnsub) return;
     eventsUnsub = db.collection('events').onSnapshot(function (snap) {
       if (snap.empty) return; // nothing in the cloud yet — keep showing the local seed
-      EVENTS = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      EVENTS = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
       // Older/partial docs (only ever touched by syncEventPrivacyToCloud's privacy
       // patches) might be missing structural fields the UI expects — fill in safe
       // defaults so nothing crashes rendering an event created before this sync existed.
@@ -5407,7 +5413,7 @@
   function startPostsAdminSync() {
     if (!db || postsAdminUnsub) return;
     postsAdminUnsub = db.collection('posts').onSnapshot(function (snap) {
-      POSTS_ADMIN = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      POSTS_ADMIN = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
       POSTS_ADMIN.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
       renderSidebar();
       if (currentPage === 'posts') renderPostsPage(document.getElementById('page-content'));
@@ -6050,7 +6056,7 @@
   function startTicketsSync() {
     if (!db || ticketsUnsub) return;
     ticketsUnsub = db.collection('tickets').onSnapshot(function (snap) {
-      TICKETS_ADMIN = snap.docs.map(function (doc) { return Object.assign({ id: doc.id }, doc.data()); });
+      TICKETS_ADMIN = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
       TICKETS_ADMIN.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
       renderSidebar();
       if (currentPage === 'tickets') renderTicketsPage(document.getElementById('page-content'));
