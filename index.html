@@ -1645,6 +1645,67 @@
     renderEventsCardGrid();
   }
 
+  // Firestore has no "rename doc ID" operation, and the event's own doc is only half
+  // the story — photos, purchases, enquiries, admin requests and guest registrations
+  // are all separate top-level collections that point back at it via an `eventId`
+  // field, not a subcollection, so simply copying the event doc to a new ID (the old
+  // behavior) orphaned every one of those: they kept pointing at an ID that no longer
+  // resolved to anything, which is exactly why both "Test Event" cards showed 0 photos
+  // and the old one never actually disappeared (its delete was silently swallowed, so
+  // any failure there — permissions, network — just left a dangling duplicate forever).
+  // This version migrates every linked collection's eventId field first, in batches,
+  // and only deletes the old event doc once every one of those writes has actually
+  // succeeded — any failure along the way stops before anything is deleted and tells
+  // the user plainly, instead of quietly leaving the event half-renamed.
+  const EVENT_LINKED_COLLECTIONS = ['photos', 'purchases', 'adminRequests', 'enquiries', 'guestRegistrations'];
+  function renameEventId(oldId, cleanId) {
+    if (!db) { alert('Not connected to the cloud — try again once you\'re back online.'); return; }
+    const e = EVENTS.find(function (x) { return x.id === oldId; });
+    const btns = document.querySelectorAll('[data-rename-event]');
+    btns.forEach(function (b) { b.style.opacity = '0.4'; b.style.pointerEvents = 'none'; });
+
+    function migrateCollection(name) {
+      return db.collection(name).where('eventId', '==', oldId).get().then(function (snap) {
+        if (snap.empty) return;
+        // Firestore batches cap out at 500 writes — chunk defensively in case a big
+        // event (thousands of photos) is being renamed.
+        const docs = snap.docs;
+        const chunks = [];
+        for (let i = 0; i < docs.length; i += 450) chunks.push(docs.slice(i, i + 450));
+        return chunks.reduce(function (p, chunk) {
+          return p.then(function () {
+            const batch = db.batch();
+            chunk.forEach(function (d) { batch.update(d.ref, { eventId: cleanId }); });
+            return batch.commit();
+          });
+        }, Promise.resolve());
+      });
+    }
+
+    db.collection('events').doc(oldId).get().then(function (doc) {
+      const data = doc.exists ? doc.data() : Object.assign({}, e);
+      return db.collection('events').doc(cleanId).set(data)
+        .then(function () { return Promise.all(EVENT_LINKED_COLLECTIONS.map(migrateCollection)); })
+        .then(function () { return db.collection('events').doc(oldId).delete(); });
+    }).then(function () {
+      // Face search is a separate external collection keyed by event ID (not
+      // Firestore) — best-effort move it too, but don't let a face-service hiccup
+      // undo the rename that's already safely committed above.
+      return createEventFaceCollection(cleanId).then(function () { return deleteEventFaceCollection(oldId); }).catch(function () {});
+    }).then(function () {
+      if (e) e.id = cleanId;
+      if (currentEventId === oldId) currentEventId = cleanId;
+      btns.forEach(function (b) { b.style.opacity = ''; b.style.pointerEvents = ''; });
+      renderEventsCardGrid();
+      renderSidebar();
+      alert('Event ID changed to "' + cleanId + '" — if this event has photos, tap "Reindex Faces" in Event Settings once to restore face search under the new ID.');
+    }).catch(function (err) {
+      console.error('renameEventId failed', err);
+      btns.forEach(function (b) { b.style.opacity = ''; b.style.pointerEvents = ''; });
+      alert('Could not change the Event ID — nothing was deleted, your event is unchanged. Please try again.');
+    });
+  }
+
   function renderEventsCardGrid() {
     const grid = document.getElementById('events-card-grid');
     if (!grid) return;
@@ -1693,21 +1754,7 @@
         if (!newId || !newId.trim() || newId.trim() === e.id) return;
         const cleanId = newId.trim().toLowerCase().replace(/\s+/g, '-');
         if (EVENTS.some(function (x) { return x.id === cleanId; })) { alert('That Event ID is already used by another event.'); return; }
-        const oldId = e.id;
-        // Firestore has no "rename doc ID" operation — copy the full doc to the new ID,
-        // then delete the old one, so guest links under the old ID stop resolving and
-        // the new ID carries over everything (privacy, albums, etc.) exactly as-is.
-        if (db) {
-          db.collection('events').doc(oldId).get().then(function (doc) {
-            const data = doc.exists ? doc.data() : Object.assign({}, e);
-            return db.collection('events').doc(cleanId).set(data).then(function () {
-              return db.collection('events').doc(oldId).delete();
-            });
-          }).catch(function () {});
-        }
-        e.id = cleanId;
-        if (currentEventId === oldId) currentEventId = cleanId;
-        renderEventsCardGrid();
+        renameEventId(e.id, cleanId);
       });
       grid.appendChild(card);
     });
@@ -4375,9 +4422,25 @@
     evt.target.value = '';
   }
 
+  // Dropped-in files from a drag-and-drop don't always carry a reliable f.type — some
+  // OS/browser combos (notably dragging straight off Windows Explorer, or files with
+  // less common extensions) leave File.type as an empty string even though the file is
+  // a perfectly good image, which silently filtered EVERY dropped photo out here before.
+  // The file picker (click to browse) usually gets type right since accept="image/*"
+  // does the filtering there, so this only had to fall back for the actual drop path.
+  const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i;
+  function isLikelyImageFile(f) {
+    if (f.type && f.type.indexOf('image/') === 0) return true;
+    if (!f.type && IMAGE_EXT_RE.test(f.name || '')) return true;
+    return false;
+  }
   function uploadFilesToEvent(files, mode) {
-    const imageFiles = files.filter(function (f) { return f.type && f.type.indexOf('image/') === 0; });
-    if (!imageFiles.length) return;
+    const imageFiles = files.filter(isLikelyImageFile);
+    if (!imageFiles.length) {
+      const queue = document.getElementById('up-queue');
+      if (files.length && queue) queue.innerHTML = '<div style="padding:9px 0;font-size:12.5px;color:#D0342C;">Couldn\'t recognize any of those as image files — try JPG, PNG, HEIC or WEBP.</div>';
+      return;
+    }
     const queue = document.getElementById('up-queue');
     const eventSelect = document.getElementById('up-event-select');
     const eventId = eventSelect ? eventSelect.value : (EVENTS[0] ? EVENTS[0].id : '');
