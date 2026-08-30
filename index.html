@@ -411,7 +411,7 @@
     plan: 'Growth Plan', creditsUsed: 6400, creditsTotal: 10000,
     renewalDate: '2026-09-01', billingCycle: 'Monthly',
     followCode: 'FA-BXYHLB', originalFiles: 9,
-    logoUrl: '', coverUrl: '', subdomain: '', portfolioEventId: '',
+    logoUrl: '', coverUrl: '', coverVideoUrl: '', subdomain: '', portfolioEventId: '',
     // Optional background track mixed into a guest's "Create My Reel" video (guest app,
     // My Photos) — we can't legally bundle real music ourselves, so a reel is silent
     // until the studio uploads one they're licensed to use. See uploadReelMusic() below.
@@ -4798,6 +4798,49 @@
     renderProfileWizard(document.getElementById('page-content'));
   }
 
+  // Cover Video — optional, plays instead of the Cover Photo on the guest app's Event
+  // Gate hero (the very first screen a guest ever sees), muted/looping/autoplaying for
+  // a much more alive first impression than a static photo. Deliberately NOT resized/
+  // transcoded here (no browser-side video compression tool exists that's remotely as
+  // simple as resizeFileToBlob for images) — instead this is capped at a hard file-size
+  // ceiling and the guest is told up front to keep the source clip short, since that
+  // first screen loading a multi-minute/multi-hundred-MB video is exactly the kind of
+  // "feels laggy" first impression a studio uploading this is trying to avoid, not
+  // create. The video is optional and additive — removing it (or never uploading one)
+  // just leaves the existing Cover Photo behavior exactly as it was.
+  const COVER_VIDEO_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+  function uploadStudioCoverVideo(evt) {
+    const file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (!file || file.type.indexOf('video/') !== 0) return;
+    if (file.size > COVER_VIDEO_MAX_BYTES) {
+      alert('That video is ' + (file.size / (1024 * 1024)).toFixed(1) + 'MB — please keep it under 20MB (a short, ~5-10 second clip works best) so it loads instantly for guests instead of feeling slow.');
+      return;
+    }
+    const statusMsg = document.getElementById('cover-video-status');
+    if (statusMsg) { statusMsg.textContent = 'Uploading…'; statusMsg.style.display = 'block'; }
+    uploadPhotoToStorage(file, file.name, 'photos/studio-cover-video').then(function (url) {
+      const oldUrl = STUDIO.coverVideoUrl;
+      STUDIO.coverVideoUrl = url;
+      if (db) db.collection('studio').doc('profile').set({ coverVideoUrl: url }, { merge: true }).catch(showSyncFailureToast);
+      if (oldUrl) deleteStorageFileByUrl(oldUrl);
+      renderProfileWizard(document.getElementById('page-content'));
+    }).catch(function (err) {
+      console.error('uploadStudioCoverVideo failed', err);
+      alert('Could not upload the cover video' + (err && err.code ? ' (' + err.code + ')' : '') + '. Please try again.');
+      if (statusMsg) statusMsg.style.display = 'none';
+    });
+  }
+
+  function removeStudioCoverVideo() {
+    if (!confirm('Remove the studio cover video? The Event Gate will go back to showing the Cover Photo.')) return;
+    const oldUrl = STUDIO.coverVideoUrl;
+    STUDIO.coverVideoUrl = '';
+    if (db) db.collection('studio').doc('profile').set({ coverVideoUrl: '' }, { merge: true }).catch(showSyncFailureToast);
+    if (oldUrl) deleteStorageFileByUrl(oldUrl);
+    renderProfileWizard(document.getElementById('page-content'));
+  }
+
   // Guest Reels background music — deliberately stored as an inline base64 data URL on
   // the studio/profile doc (like the small logo above), NOT uploaded to Firebase
   // Storage like the cover photo. This isn't just a style choice: a Storage download URL
@@ -6850,6 +6893,20 @@
             '</div>' +
             '<div class="hint">Displayed as the Portfolio banner, and as the default cover photo for brand-new events</div>' +
           '</div>' +
+        '</div>' +
+        '<div style="margin-top:20px;">' +
+          '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Cover Video (optional)</label>' +
+          (STUDIO.coverVideoUrl
+            ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;max-width:360px;margin-bottom:10px;background:#000;"><video src="' + STUDIO.coverVideoUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" muted loop autoplay playsinline></video></div>'
+            : '<div style="width:100%;max-width:360px;aspect-ratio:16/10;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No cover video yet</div>') +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+            '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Upload video' +
+              '<input type="file" accept="video/*" style="display:none" onchange="uploadStudioCoverVideo(event)">' +
+            '</label>' +
+            (STUDIO.coverVideoUrl ? '<button class="btn-outline btn-sm" style="color:#D0342C;border-color:#f0c9c7;" onclick="removeStudioCoverVideo()">Remove</button>' : '') +
+            '<span id="cover-video-status" class="hint" style="display:none;margin:0;">Uploading…</span>' +
+          '</div>' +
+          '<div class="hint">Plays instead of the Cover Photo on your guests\' very first "Enter Event ID" screen — muted, looping, no controls. Keep it short (5-10 seconds) and under 20MB so it feels instant instead of laggy. Leave this empty to keep using the Cover Photo above.</div>' +
         '</div>';
     }
     if (key === 'social') {
