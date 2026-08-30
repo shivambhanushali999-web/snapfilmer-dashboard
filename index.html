@@ -1692,7 +1692,17 @@
       data.id = cleanId;
       return db.collection('events').doc(cleanId).set(data)
         .then(function () { return Promise.all(EVENT_LINKED_COLLECTIONS.map(migrateCollection)); })
-        .then(function () { return db.collection('events').doc(oldId).delete(); });
+        .then(function () {
+          // Try a real delete of the old doc first (the clean outcome) — but some
+          // Firestore security rules allow create/update while denying delete, which
+          // previously left the old doc behind forever with no way to hide it. Falling
+          // back to marking it `_renamedAway` (filtered out in startEventsSync above)
+          // means the rename still fully succeeds from the studio's point of view even
+          // when the delete itself isn't permitted.
+          return db.collection('events').doc(oldId).delete().catch(function () {
+            return db.collection('events').doc(oldId).set({ _renamedAway: true, renamedTo: cleanId }, { merge: true });
+          });
+        });
     }).then(function () {
       // Face search is a separate external collection keyed by event ID (not
       // Firestore) — best-effort move it too, but don't let a face-service hiccup
@@ -1747,12 +1757,25 @@
       card.querySelector('[data-del]').addEventListener('click', function (ev) {
         ev.stopPropagation();
         if (!confirm('Delete "' + e.name + '"? This cannot be undone.')) return;
-        const idx = EVENTS.findIndex(function (x) { return x.id === e.id; });
-        if (idx !== -1) EVENTS.splice(idx, 1);
-        if (db) db.collection('events').doc(e.id).delete().catch(function () {});
         deleteEventFaceCollection(e.id);
-        renderEventsCardGrid();
-        renderSidebar();
+        // Removing from the local EVENTS array immediately used to make the card
+        // vanish even when the Firestore delete itself silently failed underneath
+        // (e.g. a security rule permits update/create but not delete) — the very next
+        // onSnapshot refresh would then bring the "deleted" event right back, looking
+        // like a bug that reintroduces itself. Now the delete has to actually succeed,
+        // or fall back to the same _renamedAway-style hide flag, before the card is
+        // considered gone — either way it now leaves for good.
+        if (!db) return;
+        db.collection('events').doc(e.id).delete().catch(function () {
+          return db.collection('events').doc(e.id).set({ _renamedAway: true }, { merge: true });
+        }).then(function () {
+          const idx = EVENTS.findIndex(function (x) { return x.id === e.id; });
+          if (idx !== -1) EVENTS.splice(idx, 1);
+          renderEventsCardGrid();
+          renderSidebar();
+        }).catch(function () {
+          alert('Could not delete this event — please check your connection and try again.');
+        });
       });
       card.querySelector('[data-rename-event]').addEventListener('click', function (ev) {
         ev.stopPropagation();
@@ -5359,7 +5382,13 @@
     if (!db || eventsUnsub) return;
     eventsUnsub = db.collection('events').onSnapshot(function (snap) {
       if (snap.empty) return; // nothing in the cloud yet — keep showing the local seed
-      EVENTS = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); });
+      EVENTS = snap.docs.map(function (doc) { return Object.assign({}, doc.data(), { id: doc.id }); })
+        // renameEventId() marks the old doc `_renamedAway: true` instead of relying on
+        // being able to delete it (some Firestore security rules allow create/update
+        // but not delete, which used to leave a stray duplicate visible forever) —
+        // filter those out here so a renamed event only ever shows once, under its
+        // new ID, everywhere EVENTS is used.
+        .filter(function (e) { return !e._renamedAway; });
       // Older/partial docs (only ever touched by syncEventPrivacyToCloud's privacy
       // patches) might be missing structural fields the UI expects — fill in safe
       // defaults so nothing crashes rendering an event created before this sync existed.
