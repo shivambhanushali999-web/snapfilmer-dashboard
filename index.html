@@ -2198,7 +2198,7 @@
           // is just albums + upload + photo grid, nothing settings-related mixed in.
           '<div id="ep-upload-target-note" style="font-size:11.5px;color:var(--muted);margin-bottom:8px;"></div>' +
           '<div class="grid-2" style="margin-bottom:20px;">' +
-            '<div class="card" style="border:2px dashed var(--border);">' +
+            '<div class="card" id="ep-dropzone-standard" style="border:2px dashed var(--border);transition:border-color .15s,background .15s;">' +
               '<div style="display:flex;align-items:center;gap:10px;">' +
                 '<div class="ic" style="background:var(--accent-soft);color:var(--accent-ink);width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + ICONS.UPLOAD + '</div>' +
                 '<div><div style="font-weight:800;font-size:13.5px;">Standard Upload</div><div style="font-size:11.5px;color:var(--muted);">Drag and drop your images here</div></div>' +
@@ -2215,7 +2215,7 @@
                 '<label class="switch"><input type="checkbox" id="ep-upload-wm-standard"' + (e.watermark.standard.enabled ? ' checked' : '') + ' onchange="toggleUploadWatermark(\'standard\', this.checked)"><span class="slider"></span></label>' +
               '</div>' +
             '</div>' +
-            '<div class="card" style="border:2px dashed var(--border);">' +
+            '<div class="card" id="ep-dropzone-original" style="border:2px dashed var(--border);transition:border-color .15s,background .15s;">' +
               '<div style="display:flex;align-items:center;gap:10px;">' +
                 '<div class="ic" style="background:var(--accent-soft);color:var(--accent-ink);width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;">' + ICONS.IMAGE + '</div>' +
                 '<div><div style="font-weight:800;font-size:13.5px;">Original Upload</div><div style="font-size:11.5px;color:var(--muted);">Upload and store original files <span class="pill orange" style="margin-left:4px;">Counts as 2x</span></div></div>' +
@@ -2229,7 +2229,8 @@
               '</div>' +
             '</div>' +
           '</div>' +
-          '<div id="ep-upload-queue" style="margin-bottom:14px;"></div>' +
+          '<div id="ep-upload-progress" style="display:none;font-weight:800;font-size:13px;margin-bottom:8px;"></div>' +
+          '<div id="ep-upload-queue" style="margin-bottom:14px;max-height:340px;overflow-y:auto;"></div>' +
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
             '<div><span style="font-weight:800;font-size:15px;" id="ep-album-title">All Photos</span> <span style="color:var(--muted);font-size:12.5px;" id="ep-album-count"></span></div>' +
             '<div style="display:flex;gap:8px;">' +
@@ -2263,6 +2264,7 @@
     renderEventViews(e);
     renderEventVideos(e);
     startDashboardPhotosSync(e.id);
+    wireEpDropzones();
     fillIcons();
 
     // Pull the real live privacy setting from Firestore, since it's the source of truth
@@ -3406,22 +3408,49 @@
   // at 10k-100k photos, one round-trip per doc is the single biggest avoidable cost;
   // batched commit() calls turn that into a couple hundred round-trips total instead of
   // tens of thousands.
+  //
+  // A failed commit() here used to be silent and total: Promise.all(commits) rejects on
+  // the FIRST failed batch, which threw away the whole upload's summary (the caller's
+  // .then(result => ...) never ran) — but every individual photo's row already said
+  // "Uploaded" the moment its Storage upload finished, well before its batch even tried
+  // to commit. So a studio could upload e.g. 1363 photos, have the last (smallest,
+  // < 400) batch fail, and see every row say "Uploaded" while genuinely only 1200 photo
+  // records existed in Firestore afterward — with nothing in the UI ever saying so. This
+  // version retries each failed batch a few times (transient network blips are the most
+  // common real-world cause) and, if a batch still can't commit after that, keeps exact
+  // count so the final summary can tell the studio the truth instead of nothing at all.
   function createPhotoBatchWriter() {
     let batch = db.batch();
     let count = 0;
-    const commits = [];
+    const commitPromises = [];
+    let confirmedCount = 0;
+    let lostCount = 0;
+    function commitWithRetry(b, size, attempt) {
+      return b.commit().then(function () {
+        confirmedCount += size;
+      }).catch(function (err) {
+        if (attempt < 3) {
+          return new Promise(function (resolve) { setTimeout(resolve, 600 * attempt); })
+            .then(function () { return commitWithRetry(b, size, attempt + 1); });
+        }
+        console.error('Photo batch commit failed after retries — ' + size + ' photo record(s) lost', err);
+        lostCount += size;
+      });
+    }
     function add(ref, data) {
       batch.set(ref, data);
       count++;
       if (count >= 400) {
-        commits.push(batch.commit());
+        commitPromises.push(commitWithRetry(batch, count, 1));
         batch = db.batch();
         count = 0;
       }
     }
     function flush() {
-      if (count > 0) commits.push(batch.commit());
-      return Promise.all(commits);
+      if (count > 0) commitPromises.push(commitWithRetry(batch, count, 1));
+      return Promise.all(commitPromises).then(function () {
+        return { confirmed: confirmedCount, lost: lostCount };
+      });
     }
     return { add: add, flush: flush };
   }
@@ -3519,8 +3548,12 @@
     }
     const workers = [];
     for (let i = 0; i < Math.min(UPLOAD_CONCURRENCY, files.length); i++) workers.push(worker());
-    return Promise.all(workers).then(function () { return writer.flush(); }).then(function () {
-      return { done: doneCount, failed: failCount, total: files.length };
+    return Promise.all(workers).then(function () { return writer.flush(); }).then(function (writerResult) {
+      // doneCount is "the file uploaded and we tried to save its record" — writerResult
+      // tells us how many of those records actually landed in Firestore after retries.
+      // recordsLost surfaces the gap so a studio never again sees every row say
+      // "Uploaded" while some fraction of those photos simply don't exist afterward.
+      return { done: doneCount - writerResult.lost, failed: failCount, recordsLost: writerResult.lost, total: files.length };
     });
   }
 
@@ -3589,8 +3622,16 @@
   // "Unsorted" if none) — no separate event/album dropdowns needed, since real Kamero
   // uploads directly into the folder you already have open.
   function handleEventPhotoUpload(evt, quality) {
-    const files = Array.prototype.slice.call(evt.target.files || []).filter(function (f) { return f.type && f.type.indexOf('image/') === 0; });
+    const files = Array.prototype.slice.call(evt.target.files || []).filter(isLikelyImageFile);
     evt.target.value = '';
+    processEventPhotoFiles(files, quality);
+  }
+
+  // Split out of handleEventPhotoUpload so a drag-and-drop onto the upload cards
+  // (wireEpDropzones below) can feed files in exactly the same way as the file picker,
+  // instead of drag-and-drop here being pure decoration with a caption that lied about
+  // what the card could actually do.
+  function processEventPhotoFiles(files, quality) {
     if (!files.length) return;
     const eventId = currentEventId;
     // #ep-upload-target-note always tells the studio exactly where a photo is about to
@@ -3613,10 +3654,32 @@
       return;
     }
     let uploadedInBatch = 0;
+    // A big batch (hundreds/thousands of photos) used to give no sense of overall
+    // progress at all — just a scrolling list of individual rows with no way to tell
+    // how far along the whole thing was without counting. This ties a single running
+    // "X of Y" line to the same onFileStart/onFileDone callbacks the per-row pills
+    // already use, so it stays in sync for free.
+    const progressEl = document.getElementById('ep-upload-progress');
+    const totalFiles = files.length;
+    let startedCount = 0;
+    let settledCount = 0;
+    let failedCount = 0;
+    function renderUploadProgress() {
+      if (!progressEl) return;
+      progressEl.style.display = 'block';
+      if (settledCount >= totalFiles) {
+        progressEl.textContent = 'Done — ' + uploadedInBatch + ' of ' + totalFiles + ' uploaded' + (failedCount ? (', ' + failedCount + ' failed') : '') + '.';
+      } else {
+        progressEl.textContent = 'Uploading ' + settledCount + ' of ' + totalFiles + '...';
+      }
+    }
+    renderUploadProgress();
     uploadPhotosWithPool(files, {
       eventId: eventId, albumName: albumName, quality: quality, markHighlight: markHighlight,
       resize: function (file) { return prepareUploadBlob(file, quality); },
       onFileStart: function (file) {
+        startedCount++;
+        renderUploadProgress();
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:12.5px;';
         row.innerHTML = '<span>' + file.name + '</span><span class="pill orange">Uploading...</span>';
@@ -3624,10 +3687,12 @@
         return row.querySelector('.pill');
       },
       onFileDone: function (statusEl, ok) {
+        settledCount++;
+        if (ok) uploadedInBatch++; else failedCount++;
+        renderUploadProgress();
         if (!statusEl) return;
         statusEl.textContent = ok ? 'Uploaded' : 'Failed';
         statusEl.className = ok ? 'pill green' : 'pill gray';
-        if (ok) uploadedInBatch++;
       },
     }).then(function (result) {
       const ev = EVENTS.find(function (e) { return e.id === eventId; });
@@ -3643,6 +3708,14 @@
         // of trusting this cached number. Push albums along with photos so both agree.
         syncEventPrivacyToCloud(eventId, { photos: ev.photos, albums: ev.albums });
         renderAlbumSidebar(ev);
+      }
+      if (progressEl) {
+        progressEl.textContent = 'Done — ' + result.done + ' of ' + result.total + ' uploaded' +
+          (result.failed ? (', ' + result.failed + ' failed') : '') +
+          (result.recordsLost ? (', ' + result.recordsLost + ' more lost while saving — see below') : '') + '.';
+      }
+      if (result.recordsLost) {
+        alert(result.recordsLost + ' photo(s) uploaded to storage but their records failed to save even after retrying (likely a connection drop). Please select those same file(s) again and upload once more — nothing else needs to be redone.');
       }
     });
   }
@@ -4391,7 +4464,8 @@
               ICONS.UPLOAD + '<div style="font-weight:700;color:var(--ink);">Click to browse or drag photos here</div><div style="font-size:12px;">JPG, PNG up to 25MB each</div>' +
               '<input type="file" accept="image/*" multiple style="display:none" onchange="handleWebUpload(event)">' +
             '</label>' +
-            '<div id="up-queue" style="margin-top:14px;"></div>' +
+            '<div id="up-upload-progress" style="display:none;font-weight:800;font-size:13px;margin-top:12px;"></div>' +
+            '<div id="up-queue" style="margin-top:8px;max-height:340px;overflow-y:auto;"></div>' +
           '</div>' +
           '<div class="card">' +
             '<div class="card-title">Credit Cost</div>' +
@@ -4422,7 +4496,8 @@
             ICONS.UPLOAD + '<div style="font-weight:700;color:var(--ink);">Select photos for compressed upload</div>' +
             '<input type="file" accept="image/*" multiple style="display:none" onchange="handleWebUpload(event, \'legacy\')">' +
           '</label>' +
-          '<div id="up-queue" style="margin-top:14px;"></div>' +
+          '<div id="up-upload-progress" style="display:none;font-weight:800;font-size:13px;margin-top:12px;"></div>' +
+          '<div id="up-queue" style="margin-top:8px;max-height:340px;overflow-y:auto;"></div>' +
         '</div>';
       populateUploadAlbumSelect();
       const legacyEventSelect = document.getElementById('up-event-select');
@@ -4490,6 +4565,23 @@
       if (queue) queue.innerHTML = '<div style="padding:9px 0;font-size:12.5px;">No cloud connection</div>';
       return;
     }
+    // Same running "X of Y" indicator as the Event Settings upload panel — see the
+    // matching comment in handleEventPhotoUpload().
+    const progressEl = document.getElementById('up-upload-progress');
+    const totalFiles = imageFiles.length;
+    let uploadedInBatch = 0;
+    let settledCount = 0;
+    let failedCount = 0;
+    function renderUploadProgress() {
+      if (!progressEl) return;
+      progressEl.style.display = 'block';
+      if (settledCount >= totalFiles) {
+        progressEl.textContent = 'Done — ' + uploadedInBatch + ' of ' + totalFiles + ' uploaded' + (failedCount ? (', ' + failedCount + ' failed') : '') + '.';
+      } else {
+        progressEl.textContent = 'Uploading ' + settledCount + ' of ' + totalFiles + '...';
+      }
+    }
+    renderUploadProgress();
     uploadPhotosWithPool(imageFiles, {
       eventId: eventId, albumName: albumName, quality: mode === 'legacy' ? 'legacy' : quality,
       resize: function (file) { return mode === 'legacy' ? resizeFileToBlob(file, 1000, 0.6) : prepareUploadBlob(file, quality); },
@@ -4501,6 +4593,9 @@
         return row.querySelector('.pill');
       },
       onFileDone: function (statusEl, ok) {
+        settledCount++;
+        if (ok) uploadedInBatch++; else failedCount++;
+        renderUploadProgress();
         if (!statusEl) return;
         statusEl.textContent = ok ? 'Uploaded' : 'Failed';
         statusEl.className = ok ? 'pill green' : 'pill gray';
@@ -4517,6 +4612,14 @@
         // be pushed to Firestore too, not just the event's total photo count, otherwise
         // the album sidebar shows a stale "(0)" even once photos are really there.
         syncEventPrivacyToCloud(eventId, { photos: ev.photos, albums: ev.albums });
+      }
+      if (progressEl) {
+        progressEl.textContent = 'Done — ' + result.done + ' of ' + result.total + ' uploaded' +
+          (result.failed ? (', ' + result.failed + ' failed') : '') +
+          (result.recordsLost ? (', ' + result.recordsLost + ' more lost while saving — see below') : '') + '.';
+      }
+      if (result.recordsLost) {
+        alert(result.recordsLost + ' photo(s) uploaded to storage but their records failed to save even after retrying (likely a connection drop). Please select those same file(s) again and upload once more — nothing else needs to be redone.');
       }
     });
   }
@@ -4543,6 +4646,41 @@
     zone.addEventListener('drop', function (e) {
       const files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
       uploadFilesToEvent(files);
+    });
+  }
+
+  // The Event Settings "Standard Upload"/"Original Upload" cards said "Drag and drop
+  // your images here" but were never actually wired to receive a drop — only the file
+  // picker button worked, silently doing nothing (not even a preventDefault, so the
+  // browser would just try to navigate to the dropped image) if a studio dragged
+  // photos straight onto them. Re-runs every time renderEventDetail() re-renders this
+  // page, matching the Standard/Original card ids exactly so each drop uses the right
+  // quality tier.
+  function wireEpDropzones() {
+    [['ep-dropzone-standard', 'standard'], ['ep-dropzone-original', 'original']].forEach(function (pair) {
+      const zone = document.getElementById(pair[0]);
+      const quality = pair[1];
+      if (!zone) return;
+      ['dragenter', 'dragover'].forEach(function (evtName) {
+        zone.addEventListener(evtName, function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.style.borderColor = 'var(--accent)';
+          zone.style.background = 'var(--accent-soft, #E6E8E3)';
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (evtName) {
+        zone.addEventListener(evtName, function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.style.borderColor = 'var(--border)';
+          zone.style.background = 'transparent';
+        });
+      });
+      zone.addEventListener('drop', function (e) {
+        const files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []).filter(isLikelyImageFile);
+        processEventPhotoFiles(files, quality);
+      });
     });
   }
 
@@ -5043,6 +5181,13 @@
 
   function renderShareTab(e) {
     const el = document.getElementById('share-content');
+    // uploadStudioLogo()/removeStudioLogo() call this to refresh the Share tab's QR
+    // codes once a logo change lands — but if the studio has since navigated away from
+    // Share entirely (e.g. straight to uploading photos), #share-content no longer
+    // exists and this used to throw straight into the console instead of just quietly
+    // being a no-op, which is all it should do: the tab will render fresh from current
+    // data next time it's actually opened anyway.
+    if (!el) return;
     if (shareTab === 'message') {
       el.innerHTML =
         '<div class="tabs-row" id="share-msg-subtabs" style="margin-bottom:14px;">' +
