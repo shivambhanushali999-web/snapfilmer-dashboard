@@ -651,6 +651,20 @@
     functionsSDK = null;
   }
 
+  // Rewrites a Firebase Storage download URL to go through our Cloudflare Worker CDN
+  // (cdn.snapfilmer.in), which transparently proxies+caches the exact same
+  // firebasestorage.googleapis.com content at Cloudflare's edge. Display-time only —
+  // never applied before storing a URL in Firestore/localStorage and never applied to
+  // upload calls, so anything that later parses/compares the stored URL (orphaned-file
+  // cleanup, etc.) still sees the canonical Firebase host. Apply this as the LAST step,
+  // right before a URL is written into src/href.
+  function cdnize(url) {
+    if (!url || typeof url !== 'string') return url;
+    return url.indexOf('firebasestorage.googleapis.com') !== -1
+      ? url.replace('firebasestorage.googleapis.com', 'cdn.snapfilmer.in')
+      : url;
+  }
+
   function friendlyAuthError(err) {
     const code = err && err.code;
     if (code === 'auth/invalid-email') return 'That email address looks invalid.';
@@ -1305,9 +1319,9 @@
       body.innerHTML = waMessages.map(function (m) {
         let inner = '';
         if (m.mediaUrl && (m.type === 'image' || m.type === 'sticker')) {
-          inner += '<img src="' + m.mediaUrl + '" alt="" style="cursor:pointer;' + (m.type === 'sticker' ? 'max-width:120px;' : '') + '" onclick="window.open(\'' + m.mediaUrl + '\', \'_blank\')">';
+          inner += '<img src="' + cdnize(m.mediaUrl) + '" alt="" style="cursor:pointer;' + (m.type === 'sticker' ? 'max-width:120px;' : '') + '" onclick="window.open(\'' + cdnize(m.mediaUrl) + '\', \'_blank\')">';
         } else if (m.mediaUrl && m.type === 'video') {
-          inner += '<video src="' + m.mediaUrl + '" controls></video>';
+          inner += '<video src="' + cdnize(m.mediaUrl) + '" controls></video>';
         } else if (m.mediaUrl && m.type === 'audio') {
           inner += '<audio src="' + m.mediaUrl + '" controls style="max-width:240px;"></audio>';
         } else if (m.mediaUrl && m.type === 'document') {
@@ -1741,7 +1755,7 @@
       card.style.cssText = 'padding:0;overflow:hidden;cursor:pointer;';
       card.innerHTML =
         '<div style="position:relative;aspect-ratio:4/3;background:var(--bg);">' +
-          '<img src="' + e.cover + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+          '<img src="' + cdnize(e.cover) + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
           '<span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;font-weight:700;padding:4px 8px;border-radius:8px;display:flex;align-items:center;gap:4px;">' + ICONS.IMAGE + ' ' + e.photos.toLocaleString() + (e.photoLimit ? '/' + e.photoLimit.toLocaleString() : '') + '</span>' +
           '<span style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.6);color:#fff;font-size:10.5px;font-weight:700;padding:4px 8px;border-radius:8px;">Valid upto: ' + formatShortDate(e.validUpto || STUDIO.renewalDate) + '</span>' +
         '</div>' +
@@ -2149,7 +2163,7 @@
     el.innerHTML =
       '<button class="btn-ghost btn-sm" style="margin-bottom:18px;" onclick="showPage(\'events\')">' + ICONS.BACK + ' Back to Events</button>' +
       '<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">' +
-        '<img src="' + e.cover + '" style="width:64px;height:64px;border-radius:16px;object-fit:cover;">' +
+        '<img src="' + cdnize(e.cover) + '" style="width:64px;height:64px;border-radius:16px;object-fit:cover;">' +
         '<div style="flex:1;"><div style="font-size:20px;font-weight:800;">' + e.name + '</div>' +
         '<div style="color:var(--muted);font-size:12.5px;margin-top:2px;">' + formatDate(e.date) + (e.category ? ' &middot; ' + e.category : '') + ' &middot; ' + e.photos + ' photos &middot; ID: ' + e.id + '</div></div>' +
         pillFor(e.status) +
@@ -2455,7 +2469,7 @@
           '<div id="ed-sponsor-logo-row" style="' + (e.watermark.dualLogo ? '' : 'display:none;') + 'margin-top:10px;">' +
             '<label>Sponsor Logo</label>' +
             '<div style="display:flex;align-items:center;gap:10px;margin-top:6px;">' +
-              (e.watermark.sponsorLogoUrl ? '<img src="' + e.watermark.sponsorLogoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No sponsor logo uploaded yet.</span>') +
+              (e.watermark.sponsorLogoUrl ? '<img src="' + cdnize(e.watermark.sponsorLogoUrl) + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No sponsor logo uploaded yet.</span>') +
               '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (e.watermark.sponsorLogoUrl ? 'Change' : 'Upload') +
                 '<input type="file" accept="image/*" style="display:none" onchange="uploadSponsorLogo(event,\'' + e.id + '\')">' +
               '</label>' +
@@ -2629,7 +2643,7 @@
         (selectedAlbumFilter === a.name ? 'background:var(--accent-soft);' : '');
       row.innerHTML =
         '<div class="t" style="display:flex;align-items:center;gap:8px;font-size:12.5px;' + (selectedAlbumFilter === a.name ? 'color:var(--accent-ink);font-weight:800;' : '') + '">' +
-          (a.cover ? '<img src="' + a.cover + '" style="width:18px;height:18px;border-radius:4px;object-fit:cover;flex-shrink:0;">' : '<i data-icon="FOLDER"></i>') +
+          (a.cover ? '<img src="' + cdnize(a.cover) + '" style="width:18px;height:18px;border-radius:4px;object-fit:cover;flex-shrink:0;">' : '<i data-icon="FOLDER"></i>') +
           a.name + ' <span style="color:var(--muted);font-weight:600;">(' + a.count + ')</span></div>' +
         '<div style="display:flex;gap:2px;">' +
           '<label class="icon-mini" data-thumb-album="' + a.name + '" title="Set Thumbnail" style="cursor:pointer;"><i data-icon="IMAGE"></i>' +
@@ -2782,7 +2796,7 @@
         const selected = gridSelectedPhotoIds.indexOf(p.id) > -1;
         const cell = document.createElement('div');
         cell.style.cssText = 'aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--bg);position:relative;cursor:pointer;' + (selected ? 'outline:3px solid var(--accent-ink);outline-offset:-3px;' : '');
-        cell.innerHTML = '<img src="' + (p.thumbUrl || p.dataUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">' +
+        cell.innerHTML = '<img src="' + cdnize(p.thumbUrl || p.dataUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">' +
           (p.isHighlight ? '<div style="position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:50%;background:rgba(20,16,20,.55);display:flex;align-items:center;justify-content:center;color:#f5c451;" title="Highlighted">' + ICONS.STAR + '</div>' : '') +
           (gridSelectMode ? '<div style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:' + (selected ? 'var(--accent-ink)' : 'rgba(255,255,255,.85)') + ';border:1px solid rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;color:#fff;">' + (selected ? ICONS.CHECK : '') + '</div>' : '');
         cell.addEventListener('click', function () {
@@ -2972,7 +2986,7 @@
           '</div>' +
           '<div id="lb-stage" style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0;overflow:hidden;background:var(--bg);" onwheel="lightboxWheelZoom(event)">' +
             '<button class="icon-btn" style="position:absolute;left:20px;z-index:2;opacity:' + (lightboxIndex === 0 ? '.3' : '1') + ';" onclick="navigateLightbox(-1)"' + (lightboxIndex === 0 ? ' disabled' : '') + '><i data-icon="BACK"></i></button>' +
-            '<img id="lb-stage-img" src="' + p.dataUrl + '" style="max-width:82%;max-height:85%;object-fit:contain;border-radius:4px;box-shadow:0 20px 50px -24px rgba(20,16,20,.35);transform:scale(' + lightboxZoom + ') rotate(' + lightboxRotation + 'deg);transition:transform .12s ease;">' +
+            '<img id="lb-stage-img" src="' + cdnize(p.dataUrl) + '" style="max-width:82%;max-height:85%;object-fit:contain;border-radius:4px;box-shadow:0 20px 50px -24px rgba(20,16,20,.35);transform:scale(' + lightboxZoom + ') rotate(' + lightboxRotation + 'deg);transition:transform .12s ease;">' +
             '<button class="icon-btn" style="position:absolute;right:20px;z-index:2;opacity:' + (lightboxIndex === total - 1 ? '.3' : '1') + ';" onclick="navigateLightbox(1)"' + (lightboxIndex === total - 1 ? ' disabled' : '') + '><i data-icon="CHEVRON_RIGHT"></i></button>' +
           '</div>' +
         '</div>' +
@@ -3051,7 +3065,7 @@
             // in Firebase Storage (a different origin than this dashboard page) — without
             // it, drawing this <img> onto the crop canvas below "taints" the canvas and
             // toBlob()/toDataURL() throw a security error instead of producing an image.
-            '<img id="cover-crop-img" crossorigin="anonymous" src="' + p.dataUrl + '" style="position:absolute;left:0;top:0;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none;">' +
+            '<img id="cover-crop-img" crossorigin="anonymous" src="' + cdnize(p.dataUrl) + '" style="position:absolute;left:0;top:0;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none;">' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:10px;margin-top:14px;">' +
             '<i data-icon="IMAGE" style="opacity:.5;flex-shrink:0;"></i>' +
@@ -3266,7 +3280,7 @@
     // Shares the real Firebase Storage URL for this exact photo (works immediately,
     // opens directly in a browser) rather than an app deep-link the guest app doesn't
     // parse yet.
-    copyText(p.dataUrl || GUEST_APP_URL);
+    copyText(cdnize(p.dataUrl) || GUEST_APP_URL);
   }
 
   // Photo files now live in Firebase Storage (a different origin than this dashboard),
@@ -3308,11 +3322,11 @@
       body: JSON.stringify({ action: 'download', photoUrl: p.dataUrl }),
     }).then(function (res) { return res.json(); }).then(function (data) {
       if (data.dataUrl) forceDownloadDataUrl(data.dataUrl, filename);
-      else window.open(p.dataUrl, '_blank');
+      else window.open(cdnize(p.dataUrl), '_blank');
     }).catch(function () {
       // At least get the studio to the photo if the Lambda call itself fails (e.g.
       // offline) — better than a silent no-op.
-      window.open(p.dataUrl, '_blank');
+      window.open(cdnize(p.dataUrl), '_blank');
     });
   }
 
@@ -3984,7 +3998,7 @@
     const count = gridSelectedPhotoIds.length;
     const existingRows = e.albums.map(function (a) {
       return '<div class="toggle-row" data-move-album="' + a.name + '" style="padding:9px 10px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;">' +
-        (a.cover ? '<img src="' + a.cover + '" style="width:20px;height:20px;border-radius:5px;object-fit:cover;flex-shrink:0;">' : '<i data-icon="FOLDER"></i>') +
+        (a.cover ? '<img src="' + cdnize(a.cover) + '" style="width:20px;height:20px;border-radius:5px;object-fit:cover;flex-shrink:0;">' : '<i data-icon="FOLDER"></i>') +
         a.name + ' <span style="color:var(--muted);font-size:11.5px;">(' + (a.count || 0) + ')</span>' +
       '</div>';
     }).join('');
@@ -5159,7 +5173,7 @@
           // still fully functional, just without the logo baked in.
         }
       };
-      logoImg.src = STUDIO.logoUrl;
+      logoImg.src = cdnize(STUDIO.logoUrl);
     };
     qrImg.src = qrApiUrl(qrData, color, 600);
   }
@@ -5236,7 +5250,7 @@
         '<div class="card" style="margin-bottom:16px;"><div class="card-title">Upload Custom Logo</div>' +
           '<div class="card-sub">Shown in the center of every QR code below (PNG only — SVG stays vector-clean without it).</div>' +
           '<div style="display:flex;align-items:center;gap:12px;margin-top:10px;">' +
-            (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid var(--border);">' : '') +
+            (STUDIO.logoUrl ? '<img src="' + cdnize(STUDIO.logoUrl) + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid var(--border);">' : '') +
             '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change Logo' : 'Upload Logo') +
               '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event)">' +
             '</label>' +
@@ -5759,7 +5773,7 @@
           (w.logoMode !== 'text'
             ? '<div class="field">' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                  (STUDIO.logoUrl ? '<img src="' + STUDIO.logoUrl + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo yet.</span>') +
+                  (STUDIO.logoUrl ? '<img src="' + cdnize(STUDIO.logoUrl) + '" style="width:38px;height:38px;border-radius:9px;object-fit:cover;border:1px solid var(--border);">' : '<span class="card-sub" style="margin:0;">No logo yet.</span>') +
                   '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' ' + (STUDIO.logoUrl ? 'Change' : 'Upload') +
                     '<input type="file" accept="image/*" style="display:none" onchange="uploadStudioLogo(event);setTimeout(function(){renderWatermarkPage(document.getElementById(\'page-content\'));},50);">' +
                   '</label>' +
@@ -5803,7 +5817,7 @@
     const photos = watermarkPreviewPhotos();
     if (wmPreviewIndex[key] >= photos.length) wmPreviewIndex[key] = 0;
     const hasPhotos = photos.length > 0;
-    const src = hasPhotos ? photos[wmPreviewIndex[key]] : '';
+    const src = hasPhotos ? cdnize(photos[wmPreviewIndex[key]]) : '';
     return '<div class="wm-live-preview" id="wm-preview-' + key + '" style="position:relative;display:block;width:100%;min-height:280px;border-radius:12px;overflow:hidden;aspect-ratio:4/3;background:var(--bg);">' +
       (hasPhotos
         ? '<img src="' + src + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
@@ -5852,7 +5866,7 @@
       const boxW = wrap ? wrap.getBoundingClientRect().width : 300;
       const logoScale = (w.logoScale || 100) / 100;
       const logoPx = Math.max(20, Math.round(boxW * 0.1 * logoScale));
-      inner += '<img src="' + STUDIO.logoUrl + '" style="width:' + logoPx + 'px;height:' + logoPx + 'px;object-fit:contain;border-radius:6px;display:block;">';
+      inner += '<img src="' + cdnize(STUDIO.logoUrl) + '" style="width:' + logoPx + 'px;height:' + logoPx + 'px;object-fit:contain;border-radius:6px;display:block;">';
     }
     if (hasText) inner += '<span style="color:#fff;font-size:13px;font-weight:800;letter-spacing:.3px;background:rgba(0,0,0,.4);padding:5px 10px;border-radius:8px;white-space:nowrap;">' + w.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>';
     const opacity = Math.max(0, Math.min(100, w.opacity)) / 100;
@@ -7113,7 +7127,7 @@
           '<div>' +
             '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Profile Photo</label>' +
             (STUDIO.logoUrl
-              ? '<img src="' + STUDIO.logoUrl + '" style="width:100%;max-width:180px;aspect-ratio:1;object-fit:cover;border-radius:12px;border:1px solid var(--border);display:block;margin-bottom:10px;">'
+              ? '<img src="' + cdnize(STUDIO.logoUrl) + '" style="width:100%;max-width:180px;aspect-ratio:1;object-fit:cover;border-radius:12px;border:1px solid var(--border);display:block;margin-bottom:10px;">'
               : '<div style="width:100%;max-width:180px;aspect-ratio:1;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No logo yet</div>') +
             '<div style="display:flex;gap:8px;">' +
               '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Change' +
@@ -7126,7 +7140,7 @@
           '<div>' +
             '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Cover Photo</label>' +
             (STUDIO.coverUrl
-              ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;margin-bottom:10px;"><img src="' + STUDIO.coverUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>'
+              ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;margin-bottom:10px;"><img src="' + cdnize(STUDIO.coverUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>'
               : '<div style="width:100%;aspect-ratio:16/10;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No cover yet</div>') +
             '<div style="display:flex;gap:8px;">' +
               '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Change' +
@@ -7140,7 +7154,7 @@
         '<div style="margin-top:20px;">' +
           '<label style="font-size:12.5px;font-weight:700;display:block;margin-bottom:8px;">Cover Video (optional)</label>' +
           (STUDIO.coverVideoUrl
-            ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;max-width:360px;margin-bottom:10px;background:#000;"><video src="' + STUDIO.coverVideoUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;" muted loop autoplay playsinline></video></div>'
+            ? '<div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:16/10;max-width:360px;margin-bottom:10px;background:#000;"><video src="' + cdnize(STUDIO.coverVideoUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;" muted loop autoplay playsinline></video></div>'
             : '<div style="width:100%;max-width:360px;aspect-ratio:16/10;border-radius:12px;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-bottom:10px;">No cover video yet</div>') +
           '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
             '<label class="btn-outline btn-sm" style="cursor:pointer;">' + ICONS.UPLOAD + ' Upload video' +
